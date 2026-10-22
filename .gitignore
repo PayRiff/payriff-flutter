@@ -49,3 +49,7 @@ example/android/key.properties
 .DS_Store
 *.log
 *.swp
+
+# SwiftPM build output of the plugin package
+ios/payriff/.build/
+.build/
