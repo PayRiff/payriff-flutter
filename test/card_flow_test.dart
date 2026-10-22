@@ -14,6 +14,7 @@ import 'package:payriff/src/internal/card/card_clock.dart';
 import 'package:payriff/src/internal/card/card_crypto.dart';
 import 'package:payriff/src/internal/card/card_flow.dart';
 import 'package:payriff/src/internal/card/client_api.dart';
+import 'package:payriff/src/internal/card/three_ds_website_data.dart';
 import 'package:payriff/src/internal/strings.dart';
 import 'package:payriff/src/internal/ui/presenter.dart';
 import 'package:payriff/src/internal/ui/sheet.dart';
@@ -175,6 +176,8 @@ void main() {
         expect(r.headers.containsKey('Origin'), isFalse);
       }
       expect(clock.sleeps, <Duration>[const Duration(milliseconds: 2500)]);
+      // CONTRACT §9.1a: no WebView was shown, so no website data is removed.
+      expect(run.native.named('clearWebsiteData'), isEmpty);
       // CONTRACT §16.5: the values are cleared after a final result.
       expect(run.text(cardNumberFieldKey), isEmpty);
       expect(run.text(cardCvvFieldKey), isEmpty);
@@ -580,6 +583,12 @@ void main() {
         expect(run.backend.statusChecks, 1);
         expect(find.byType(PayriffThreeDsSheet), findsNothing);
         expect(run.native.secureCount, 1);
+        // A close ends the payment too: the bank page's data goes.
+        expect(
+          (run.native.named('clearWebsiteData').single.arguments
+              as Map<Object?, Object?>)['hosts'],
+          <String>['acs.bank.example'],
+        );
         // Never cancelled(userClosed) once the card was sent; the form is
         // cleared.
         expect(run.text(cardNumberFieldKey), isEmpty);
@@ -622,6 +631,8 @@ void main() {
         PayriffPendingReason.notFinal,
       );
       expect(run.backend.statusChecks, 1);
+      // The sheet showed, but its WebView loaded nothing.
+      expect(run.native.named('clearWebsiteData'), isEmpty);
     });
 
     testWidgets('a page-load error offers "Try again" (resends the POST)', (
@@ -713,10 +724,18 @@ void main() {
         NavigationDecision.prevent,
       );
 
+      // A redirect inside a hidden WebView is a site of the payment too.
+      web.delegates[1].pageStarted('https://acs2.bank.example/method/next');
+
       final PayriffResult result = await pumpUntilDone(tester, future);
       expect(result, isA<PayriffResultSuccess>());
       expect(run.backend.to('/three-ds'), hasLength(2));
       expect(find.byType(PayriffThreeDsSheet), findsNothing);
+      expect(
+        (run.native.named('clearWebsiteData').single.arguments
+            as Map<Object?, Object?>)['hosts'],
+        <String>['acs.bank.example', 'sb-api.payriff.com', 'acs2.bank.example'],
+      );
     });
 
     testWidgets('iOS: bank-page dialogs use dialog_ok and dialog_cancel, '
@@ -879,6 +898,212 @@ void main() {
       expect(second.error?.code, PayriffErrorCode.paymentInProgress);
       _loadPage(web.delegate, _callback);
       expect(await pumpUntilDone(tester, future), isA<PayriffResultSuccess>());
+    });
+  });
+
+  group('3-D Secure website data (CONTRACT §9.1a)', () {
+    test('records the host, origin and URL of http(s) pages only', () {
+      final ThreeDsWebsiteData data = ThreeDsWebsiteData();
+      expect(data.isEmpty, isTrue);
+      for (final String url in <String>[
+        'https://ACS.Bank.example/challenge?creq=1#top',
+        'https://acs.bank.example/challenge',
+        'https://user:pw@acs.bank.example:8443/a/b?c=d',
+        'http://plain.example',
+        'https://acs.bank.example./x',
+        'about:blank',
+        'data:text/html,hi',
+        'birbank://confirm?id=1',
+        'javascript:alert(1)',
+        'https:///no-host',
+        'not a url',
+        '',
+      ]) {
+        data.record(url);
+      }
+      expect(data.isEmpty, isFalse);
+      expect(data.hosts, <String>['acs.bank.example', 'plain.example']);
+      expect(data.origins, <String>[
+        'https://acs.bank.example',
+        'https://acs.bank.example:8443',
+        'http://plain.example',
+        'https://acs.bank.example.',
+      ]);
+      // No user info, query or fragment.
+      expect(data.urls, <String>[
+        'https://acs.bank.example/challenge',
+        'https://acs.bank.example:8443/a/b',
+        'http://plain.example/',
+        'https://acs.bank.example./x',
+      ]);
+    });
+
+    test('keeps the first maxEntries sites', () {
+      final ThreeDsWebsiteData data = ThreeDsWebsiteData();
+      for (int i = 0; i < ThreeDsWebsiteData.maxEntries + 10; i++) {
+        data.record('https://site$i.example/page');
+      }
+      expect(data.hosts, hasLength(ThreeDsWebsiteData.maxEntries));
+      expect(data.origins, hasLength(ThreeDsWebsiteData.maxEntries));
+      expect(data.urls, hasLength(ThreeDsWebsiteData.maxEntries));
+      expect(data.hosts.first, 'site0.example');
+      expect(
+        data.hosts.last,
+        'site${ThreeDsWebsiteData.maxEntries - 1}.example',
+      );
+    });
+
+    test('the sheet records the pages it allows or starts, never a '
+        'navigation it cancels', () {
+      final ThreeDsSession session = ThreeDsSession(
+        apiBaseUrl: 'https://sb-api.payriff.com',
+        strings: const PayriffStrings(PayriffLanguage.en),
+        openExternal: (String url) async => true,
+      );
+      addTearDown(session.dispose);
+      session.showPage(
+        ThreeDsRequest.get(Uri.parse('https://acs.bank.example/challenge')),
+      );
+      expect(session.websiteData.isEmpty, isTrue, reason: 'nothing loaded');
+      expect(
+        session.decideNavigation(
+          'https://acs.bank.example/next?step=2',
+          isMainFrame: true,
+        ),
+        NavigationDecision.navigate,
+      );
+      expect(
+        session.decideNavigation(
+          'https://frames.example/f',
+          isMainFrame: false,
+        ),
+        NavigationDecision.navigate,
+      );
+      expect(
+        session.decideNavigation('http://plain.example/', isMainFrame: true),
+        NavigationDecision.prevent,
+      );
+      expect(
+        session.decideNavigation('birbank://confirm', isMainFrame: true),
+        NavigationDecision.prevent,
+      );
+      // Android: the bank's POST to the callback shows only as a page start.
+      session.onMainFrameUrl(_callback);
+      // The navigation that ends the flow is cancelled before it is sent.
+      expect(
+        session.decideNavigation(
+          'https://merchant.example/return',
+          isMainFrame: true,
+        ),
+        NavigationDecision.prevent,
+      );
+      expect(session.websiteData.hosts, <String>[
+        'acs.bank.example',
+        'frames.example',
+        'sb-api.payriff.com',
+      ]);
+    });
+
+    testWidgets('a 3-D Secure payment ends with one clearWebsiteData call for '
+        'the sites its WebViews loaded', (WidgetTester tester) async {
+      final _Run run = await _start(
+        tester,
+        FakeClientBackend(
+          payPayload: _challenge(),
+          statuses: <String>['PENDING', 'APPROVED'],
+        ),
+      );
+      await fillCard(tester);
+      final Future<PayriffResult> future = run.confirm();
+      await settleSheet(tester);
+      final FakeNavigationDelegate delegate = web.delegate;
+      _loadPage(delegate, 'https://acs.bank.example/challenge');
+      expect(
+        await delegate.navigate('https://ACS.bank.example/next?session=1#top'),
+        NavigationDecision.navigate,
+      );
+      expect(
+        await delegate.navigate(
+          'https://fp.bank-cdn.example:8443/frame?id=2',
+          isMainFrame: false,
+        ),
+        NavigationDecision.navigate,
+      );
+      // Cancelled navigations never reach a server.
+      expect(
+        await delegate.navigate('http://plain.example/'),
+        NavigationDecision.prevent,
+      );
+      expect(
+        await delegate.navigate('birbank://confirm?id=1'),
+        NavigationDecision.prevent,
+      );
+      expect(run.native.named('clearWebsiteData'), isEmpty);
+      expect(await delegate.navigate(_callback), NavigationDecision.navigate);
+      _loadPage(delegate, _callback);
+      final PayriffResult result = await pumpUntilDone(tester, future);
+
+      expect(result, isA<PayriffResultSuccess>());
+      final List<MethodCall> calls = run.native.named('clearWebsiteData');
+      expect(calls, hasLength(1));
+      expect(calls.single.arguments, <String, Object?>{
+        'hosts': <String>[
+          'acs.bank.example',
+          'fp.bank-cdn.example',
+          'sb-api.payriff.com',
+        ],
+        'origins': <String>[
+          'https://acs.bank.example',
+          'https://fp.bank-cdn.example:8443',
+          'https://sb-api.payriff.com',
+        ],
+        'urls': <String>[
+          'https://acs.bank.example/challenge',
+          'https://acs.bank.example/next',
+          'https://fp.bank-cdn.example:8443/frame',
+          'https://sb-api.payriff.com/api/v3/gateway/kapital/callback/o1',
+        ],
+      });
+    });
+
+    testWidgets('a failing clearWebsiteData leaves the result alone and is '
+        'logged at debug level', (WidgetTester tester) async {
+      final List<PayriffLogEntry> logs = <PayriffLogEntry>[];
+      final StreamSubscription<PayriffLogEntry> sub = Payriff.logStream.listen(
+        logs.add,
+      );
+      addTearDown(sub.cancel);
+      final _Run run = await _start(
+        tester,
+        FakeClientBackend(
+          payPayload: _challenge(),
+          statuses: <String>['APPROVED'],
+        ),
+        config: const PayriffConfig(
+          environment: PayriffEnvironment.sandbox,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+        ),
+      );
+      run.native.clearWebsiteDataFails = true;
+      await fillCard(tester);
+      final Future<PayriffResult> future = run.confirm();
+      await settleSheet(tester);
+      _loadPage(web.delegate, _callback);
+      final PayriffResult result = await pumpUntilDone(tester, future);
+
+      expect(result, isA<PayriffResultSuccess>());
+      expect(run.native.named('clearWebsiteData'), hasLength(1));
+      expect(Payriff.isPaymentInProgress, isFalse);
+      final List<PayriffLogEntry> failures = logs
+          .where(
+            (PayriffLogEntry e) => e.message.startsWith(
+              'Could not remove the 3-D Secure website data',
+            ),
+          )
+          .toList();
+      expect(failures, hasLength(1));
+      expect(failures.single.level, PayriffLogLevel.debug);
     });
   });
 

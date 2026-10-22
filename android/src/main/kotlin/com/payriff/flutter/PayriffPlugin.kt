@@ -5,8 +5,13 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Base64
 import android.view.WindowManager
+import android.webkit.CookieManager
+import android.webkit.WebStorage
+import android.webkit.WebView
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -20,6 +25,8 @@ import io.flutter.plugin.common.MethodChannel
  * - `appId` -> the package name, for `X-Client-App-Id`
  * - `setSecure` {secure: bool} -> null, reference-counted FLAG_SECURE on the activity window
  * - `openExternal` {url} -> bool, hardened hand-off to another app (§7.5, §16.0 item 5)
+ * - `clearWebsiteData` {hosts, origins, urls} -> null when done: removes the website data of the
+ *   sites a payment's 3-D Secure WebViews loaded (§9.1a)
  *
  * Nothing here logs. Error messages are fixed strings without input data.
  */
@@ -85,6 +92,20 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
             "openExternal" -> {
                 val url = args?.get("url") as? String
                 result.success(url != null && openExternal(url))
+            }
+            "clearWebsiteData" -> {
+                val origins = (args?.get("origins") as? List<*>)?.filterIsInstance<String>()
+                val urls = (args?.get("urls") as? List<*>)?.filterIsInstance<String>()
+                if (origins == null || urls == null) {
+                    result.error(
+                        "invalid_argument",
+                        "clearWebsiteData expects {origins: [String], urls: [String]}.",
+                        null,
+                    )
+                    return
+                }
+                // WebView, CookieManager and WebStorage belong to the main thread.
+                Handler(Looper.getMainLooper()).post { clearWebsiteData(origins, urls, result) }
             }
             else -> result.notImplemented()
         }
@@ -182,8 +203,62 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
         intent.flags = ExternalUrlPolicy.allowedLaunchFlags(intent.flags)
     }
 
+    // 3-D Secure website data (§9.1a) ----------------------------------------------------------
+
+    /**
+     * WebView data is per app, so what the 3-D Secure pages left is removed per site: the web
+     * storage of every origin, every cookie [CookieManager] returns for a visited URL (see
+     * [WebsiteData]), and the WebView HTTP cache, which is the whole app's. Data of the same sites
+     * that the app stored itself goes with it. Each step runs even when another one fails.
+     */
+    private fun clearWebsiteData(
+        origins: List<String>,
+        urls: List<String>,
+        result: MethodChannel.Result,
+    ) {
+        var failed = false
+        try {
+            val storage = WebStorage.getInstance()
+            origins.forEach { storage.deleteOrigin(it) }
+        } catch (e: Exception) {
+            failed = true
+        }
+        try {
+            val cookies = CookieManager.getInstance()
+            for (url in urls) {
+                val host = Uri.parse(url).host ?: continue
+                for (cookie in WebsiteData.expiredCookies(cookies.getCookie(url), host)) {
+                    cookies.setCookie(url, cookie)
+                }
+            }
+            cookies.flush()
+        } catch (e: Exception) {
+            failed = true
+        }
+        try {
+            val context = applicationContext
+            if (context != null) {
+                val webView = WebView(context)
+                try {
+                    webView.clearCache(true)
+                } finally {
+                    webView.destroy()
+                }
+            }
+        } catch (e: Exception) {
+            failed = true
+        }
+        if (failed) {
+            // Fixed message only: the cause may quote a URL.
+            result.error(WEBSITE_DATA_FAILED, "Removing the 3-D Secure website data failed.", null)
+        } else {
+            result.success(null)
+        }
+    }
+
     private companion object {
         const val CHANNEL = "payriff/native"
         const val ENCRYPTION_FAILED = "encryption_failed"
+        const val WEBSITE_DATA_FAILED = "website_data_failed"
     }
 }

@@ -104,21 +104,21 @@ payriffStringTable = <String, Map<String, String>>{
     'ru': 'Повторить',
   },
   'cancel_confirm_title': <String, String>{
-    'az': 'Ödənişi ləğv edək?',
-    'en': 'Cancel payment?',
-    'ru': 'Отменить оплату?',
+    'az': 'Pəncərəni bağlayaq?',
+    'en': 'Close this window?',
+    'ru': 'Закрыть окно?',
   },
   'cancel_confirm_message': <String, String>{
     'az':
-        'Ödəniş hələ tamamlanmayıb. Pəncərəni bağlasanız, ödəniş ləğv olunacaq.',
+        'Ödəniş hələ tamamlanmayıb. Pəncərəni bağlasanız, ödənişin statusunu yoxlayacağıq.',
     'en':
-        'The payment isn\'t complete yet. If you close this window, the payment will be cancelled.',
-    'ru': 'Оплата ещё не завершена. Если закрыть окно, оплата будет отменена.',
+        'The payment isn\'t finished yet. If you close this window, we\'ll check its status.',
+    'ru': 'Оплата ещё не завершена. Если закрыть окно, мы проверим её статус.',
   },
   'cancel_confirm_yes': <String, String>{
-    'az': 'Ləğv et',
-    'en': 'Cancel payment',
-    'ru': 'Отменить',
+    'az': 'Bağla',
+    'en': 'Close',
+    'ru': 'Закрыть',
   },
   'cancel_confirm_no': <String, String>{
     'az': 'Ödənişə davam et',

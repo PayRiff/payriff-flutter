@@ -23,7 +23,8 @@ platforms:
   ios:
 
 # Native code (channel `payriff/native`): card encryption, X-Client-App-Id,
-# screen protection and hardened external launches (CONTRACT §16.11).
+# screen protection, hardened external launches (CONTRACT §16.11) and the
+# removal of 3-D Secure website data (§9.1a).
 flutter:
   plugin:
     platforms:

@@ -5,8 +5,9 @@ import 'package:flutter/services.dart';
 import '../error.dart';
 
 /// The one wrapper around the plugin's `payriff/native` method channel
-/// (CONTRACT §16.11): card encryption, the app id, screen protection and
-/// hardened external launches. Nothing else in the SDK touches the channel.
+/// (CONTRACT §16.11): card encryption, the app id, screen protection,
+/// hardened external launches and the removal of 3-D Secure website data
+/// (§9.1a). Nothing else in the SDK touches the channel.
 ///
 /// Arguments and replies are never logged: `encryptCard` carries card data.
 abstract final class NativeBridge {
@@ -103,6 +104,26 @@ abstract final class NativeBridge {
       return false;
     }
   }
+
+  /// CONTRACT §9.1a: removes the website data that a payment's 3-D Secure
+  /// WebViews left for the sites they loaded. iOS removes the default data
+  /// store's records whose display name is one of [hosts] or a parent domain
+  /// of one; Android deletes the web storage of [origins], expires the
+  /// cookies of [urls] and clears the WebView cache. Completes when the
+  /// native side is done.
+  ///
+  /// Throws when that fails (a [PlatformException], or a
+  /// [MissingPluginException] without the plugin): the caller logs it and
+  /// goes on.
+  static Future<void> clearWebsiteData({
+    required List<String> hosts,
+    required List<String> origins,
+    required List<String> urls,
+  }) => channel.invokeMethod<void>('clearWebsiteData', <String, Object?>{
+    'hosts': hosts,
+    'origins': origins,
+    'urls': urls,
+  });
 
   /// Forgets the cached app id (`Payriff.debugReset`).
   static void resetCache() => _appId = null;

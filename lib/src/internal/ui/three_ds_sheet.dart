@@ -138,6 +138,7 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
       _session.onPageUnavailable();
       return;
     }
+    _session.websiteData.record(request.url.toString());
     try {
       await request.loadInto(_web);
     } on Object catch (e) {
@@ -299,6 +300,7 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
                       child: _HiddenMethodWebView(
                         request: request,
                         apiBaseUrl: session.apiBaseUrl,
+                        websiteData: session.websiteData,
                         logger: widget.logger,
                       ),
                     ),
@@ -344,17 +346,19 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
 
 /// One hidden WebView of the 3-D Secure Method: it POSTs its request once,
 /// follows the 3DS navigation rules without ever ending the flow or opening
-/// apps, answers JavaScript dialogs silently, and is destroyed with the
-/// widget.
+/// apps, answers JavaScript dialogs silently, records the sites it loads in
+/// the payment's [ThreeDsWebsiteData], and is destroyed with the widget.
 class _HiddenMethodWebView extends StatefulWidget {
   const _HiddenMethodWebView({
     required this.request,
     required this.apiBaseUrl,
+    required this.websiteData,
     required this.logger,
   });
 
   final ThreeDsRequest request;
   final String apiBaseUrl;
+  final ThreeDsWebsiteData websiteData;
   final SdkLogger logger;
 
   @override
@@ -374,15 +378,27 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
   }
 
   Future<void> _start() async {
+    final ThreeDsWebsiteData websiteData = widget.websiteData;
     final bool ready = await _configureThreeDsWebView(
       _web,
       NavigationDelegate(
-        onNavigationRequest: (NavigationRequest request) =>
-            decideHiddenNavigation(
-              _policy,
-              request.url,
-              isMainFrame: request.isMainFrame,
-            ),
+        onNavigationRequest: (NavigationRequest request) {
+          final NavigationDecision decision = decideHiddenNavigation(
+            _policy,
+            request.url,
+            isMainFrame: request.isMainFrame,
+          );
+          if (decision == NavigationDecision.navigate) {
+            websiteData.record(request.url);
+          }
+          return decision;
+        },
+        // Android does not report POST navigations as navigation requests.
+        onPageStarted: websiteData.record,
+        onUrlChange: (UrlChange change) {
+          final String? url = change.url;
+          if (url != null) websiteData.record(url);
+        },
       ),
       widget.logger,
       alert: (_) async {},
@@ -393,6 +409,7 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
     // Without its navigation rules the method WebView loads nothing; the
     // `/three-ds` loop goes on regardless.
     if (!ready || !mounted) return;
+    websiteData.record(widget.request.url.toString());
     try {
       await widget.request.loadInto(_web);
     } on Object catch (e) {

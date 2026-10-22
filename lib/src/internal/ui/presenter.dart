@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../strings.dart';
 
-/// Key of the confirmation dialog's "continue payment" action.
+/// Key of the close confirmation's "continue payment" action.
 const Key confirmNoKey = ValueKey<String>('payriff.confirm.no');
 
-/// Key of the confirmation dialog's "cancel payment" action.
+/// Key of the close confirmation's "close" action.
 const Key confirmYesKey = ValueKey<String>('payriff.confirm.yes');
 
 /// Key of the OK button of a JavaScript dialog (`dialog_ok`).
@@ -109,7 +109,8 @@ final class SheetPresenter {
     return route;
   }
 
-  /// Shows the cancel confirmation (CONTRACT §9.2). Completes with `true`
+  /// Shows the close confirmation (CONTRACT §9.2): closing checks the
+  /// payment's status, it never cancels the order. Completes with `true`
   /// when the customer confirms; `false` when they continue or the dialog
   /// is dismissed.
   Future<bool> confirmCancel(BuildContext context) async {

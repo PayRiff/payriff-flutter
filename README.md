@@ -21,8 +21,8 @@ it is built on.
   result drives your UI; your server fulfils the order (see
   [Fulfil on your server](#fulfil-on-your-server)).
 - A Flutter plugin on top of `webview_flutter`. Its small native part (card
-  encryption, app id, screen protection, hardened app hand-offs) needs no
-  setup.
+  encryption, app id, screen protection, hardened app hand-offs, removing
+  3-D Secure website data) needs no setup.
 
 ## Requirements
 
@@ -130,8 +130,9 @@ PayriffPaymentView(
   and a "Powered by Payriff" footer, like the card part of pay.payriff.com.
 - It reads the order with `Payriff.retrieveOrder` when it appears. The Pay
   button stays disabled while the order loads, when the order cannot be paid
-  by card or did not load (an error line then says why), while the form is
-  incomplete and while paying.
+  by card or did not load (an error line then says why: "This order cannot be
+  paid by card" in the view's language, or the error's message), while the
+  form is incomplete and while paying.
 - Pay runs `Payriff.confirmCardPayment`. `onResult` gets the result of each
   payment attempt, and once a fatal error that ends the order (for example
   an expired client secret, `error.isFatal`). After a result with a status,
@@ -334,6 +335,11 @@ PayriffCardForm(
   while the form or the 3-D Secure sheet is shown (Android `FLAG_SECURE`, an
   iOS cover while the app is inactive), and the values are cleared after a
   final result and when the form is disposed.
+- **3-D Secure website data**: when a payment that opened 3-D Secure pages
+  ends, the SDK removes the cookies, storage and cache that those pages left
+  in the app's WebView data, without delaying the result. Your app's own
+  WebView data of the same sites goes with it, and on Android the whole
+  WebView cache is cleared.
 
 ### Customise the card form
 
@@ -395,8 +401,9 @@ otherwise `focusedBorderColor` while one of its fields has the focus.
 
 Once the card was sent the result is never `cancelled(userClosed)`: closing
 the 3-D Secure sheet (✕, a pull on the header, or the Android back gesture)
-asks for confirmation, checks the status once and returns the final result,
-or `pending(notFinal)` while the payment may still complete.
+asks "Close this window?", checks the status once and returns the final
+result, or `pending(notFinal)` while the payment may still complete. Closing
+never cancels the order.
 
 Only one payment runs at a time; a second call returns
 `failed(PAYMENT_IN_PROGRESS)`. The sheet is pushed on the root navigator, so

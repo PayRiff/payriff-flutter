@@ -24,6 +24,7 @@ import 'card_crypto.dart';
 import 'client_api.dart';
 import 'next_action.dart';
 import 'three_ds_policy.dart';
+import 'three_ds_website_data.dart';
 
 /// Status polling interval (CONTRACT §16.7 step 5).
 const Duration cardPollInterval = Duration(milliseconds: 2500);
@@ -167,6 +168,10 @@ final class ThreeDsSession extends ChangeNotifier {
   /// The UI strings.
   final PayriffStrings strings;
 
+  /// The sites this payment's WebViews loaded (CONTRACT §9.1a): the sheet
+  /// records its pages here, the hidden 3-D Secure Method views theirs.
+  final ThreeDsWebsiteData websiteData = ThreeDsWebsiteData();
+
   final SdkLogger _logger;
   final Future<bool> Function(String url) _openExternal;
   ThreeDsNavigationPolicy _policy;
@@ -294,6 +299,7 @@ final class ThreeDsSession extends ChangeNotifier {
     switch (action) {
       case ThreeDsNavigationAction.allow:
       case ThreeDsNavigationAction.allowCallback:
+        websiteData.record(url);
         return NavigationDecision.navigate;
       case ThreeDsNavigationAction.finish:
         _onFinish();
@@ -310,6 +316,8 @@ final class ThreeDsSession extends ChangeNotifier {
   /// report POST navigations (the bank's `cres` POST to the callback) as
   /// navigation requests, so main-frame URLs are classified here too.
   void onMainFrameUrl(String url) {
+    // The WebView has requested this page, whatever the rules say now.
+    websiteData.record(url);
     if (_finished || _view != ThreeDsView.page) return;
     final bool wasArmed = _policy.callbackSeen;
     final ThreeDsNavigationAction action = _policy.decide(
@@ -331,6 +339,7 @@ final class ThreeDsSession extends ChangeNotifier {
 
   /// `onPageFinished` of the visible WebView.
   void onPageFinished(String url) {
+    websiteData.record(url);
     if (_finished || _view != ThreeDsView.page) return;
     if (!isBlankPageUrl(url)) {
       _pageLoaded = true;
@@ -539,9 +548,38 @@ final class CardPayment {
       );
     } finally {
       _closeSheet();
-      _session?.dispose();
+      final ThreeDsSession? session = _session;
       _session = null;
+      if (session != null) {
+        _removeWebsiteData(session.websiteData);
+        session.dispose();
+      }
     }
+  }
+
+  /// CONTRACT §9.1a: once the result is decided, removes the website data
+  /// of the sites the payment's WebViews loaded. Fire-and-forget: it never
+  /// delays or changes the result, and a failure is only logged. Nothing
+  /// happens when no WebView loaded a page.
+  void _removeWebsiteData(ThreeDsWebsiteData data) {
+    if (data.isEmpty) return;
+    final List<String> hosts = data.hosts;
+    unawaited(() async {
+      try {
+        await NativeBridge.clearWebsiteData(
+          hosts: hosts,
+          origins: data.origins,
+          urls: data.urls,
+        );
+        _logger.debug(
+          'Removed the 3-D Secure website data of ${hosts.join(', ')}',
+        );
+      } on Object catch (e) {
+        _logger.debug(
+          'Could not remove the 3-D Secure website data: ${redactError(e)}',
+        );
+      }
+    }());
   }
 
   Future<PayriffResult> _run(CardPlaintext card) async {

@@ -13,6 +13,9 @@
   the accepted card badges, the secure line and a "Powered by Payriff"
   footer, pays with `confirmCardPayment` and passes each result to
   `onResult`. Works as a page, in a bottom sheet and in a dialog.
+- `PayriffPaymentView` says "This order cannot be paid by card" in the
+  view's language (Azerbaijani, English or Russian) when the order loaded but
+  cannot be paid by card.
 - `PayriffPaymentViewStyle`: background, padding, the Pay button's colour,
   text, height and corners, the secondary text colour, `showBadges`,
   `showSecureNote`, `showPoweredBy` and the form's `formStyle`.
@@ -37,10 +40,18 @@
 - `Payriff.retrieveOrder` returns a `PayriffClientOrder`.
 - 3-D Secure sheet: an iOS 26-style sheet on iOS, a Material bottom sheet on
   Android; header with drag handle, title and close button (glass buttons on
-  iOS), a native loader, bank pages inset from the edges, the cancel
+  iOS), a native loader, bank pages inset from the edges, the close
   confirmation and one status check when the customer closes it, the
   page-load error with "Try again", JavaScript dialogs on iOS (titled with the
   page's host, at most three), and hardened hand-offs to bank apps.
+- The close confirmation of the 3-D Secure sheet asks "Close this window?"
+  and says that the payment's status will be checked. Closing checks the
+  status once; the SDK never cancels the order.
+- 3-D Secure website data: when a payment that opened 3-D Secure pages ends,
+  the SDK removes the website data of the sites they loaded, without
+  delaying the result. iOS removes the default data store's records of those
+  sites; Android deletes their web storage and cookies and clears the
+  WebView cache.
 - Screen protection for the form and the sheet (Android `FLAG_SECURE`, an
   iOS cover while the app is inactive); copy and cut off for the number and
   the CVV, the CVV masked and never autofilled, values cleared after a final

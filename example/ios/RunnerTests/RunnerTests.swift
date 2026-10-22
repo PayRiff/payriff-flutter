@@ -81,7 +81,7 @@ final class RunnerTests: XCTestCase {
         output.encryptedMessage.base64EncodedString(), testCase["encryptedMessage"] as? String,
         "aesGcm[\(index)] encryptedMessage")
       XCTAssertEqual(output.encryptedMessage.count, cardJson.count + 16, "aesGcm[\(index)] length")
-      XCTAssertEqual(try unwrap(output.secretKey), keyIv, "aesGcm[\(index)] secretKey")
+      XCTAssertEqual(try unwrap(output.wrappedKey), keyIv, "aesGcm[\(index)] wrappedKey")
       XCTAssertEqual(
         try gcmOpen(key: Data(aesKey), iv: Data(iv), sealed: output.encryptedMessage), cardJson,
         "aesGcm[\(index)] round trip")
@@ -92,8 +92,8 @@ final class RunnerTests: XCTestCase {
     let cardJson = Data((aesGcmCases[0]["cardJson"] as! String).utf8)
     let first = try PayriffCardCrypto.encrypt(card: cardJson, spki: testSpki)
     let second = try PayriffCardCrypto.encrypt(card: cardJson, spki: testSpki)
-    let firstKeyIv = try unwrap(first.secretKey)
-    let secondKeyIv = try unwrap(second.secretKey)
+    let firstKeyIv = try unwrap(first.wrappedKey)
+    let secondKeyIv = try unwrap(second.wrappedKey)
     XCTAssertEqual(firstKeyIv.count, PayriffCardCrypto.keyLength + PayriffCardCrypto.ivLength)
     XCTAssertNotEqual(firstKeyIv, secondKeyIv)
     XCTAssertNotEqual(first.encryptedMessage, second.encryptedMessage)
@@ -108,8 +108,8 @@ final class RunnerTests: XCTestCase {
   func testOaepIsRandomizedAndUsesTheKeySize() throws {
     let one = try PayriffCardCrypto.encrypt(card: Data("{}".utf8), spki: testSpki, aesKey: aesKey, iv: iv)
     let two = try PayriffCardCrypto.encrypt(card: Data("{}".utf8), spki: testSpki, aesKey: aesKey, iv: iv)
-    XCTAssertEqual(one.secretKey.count, 256)
-    XCTAssertNotEqual(one.secretKey, two.secretKey)
+    XCTAssertEqual(one.wrappedKey.count, 256)
+    XCTAssertNotEqual(one.wrappedKey, two.wrappedKey)
     XCTAssertEqual(one.encryptedMessage, two.encryptedMessage)
   }
 
@@ -118,7 +118,7 @@ final class RunnerTests: XCTestCase {
     let hash = SHA256.hash(data: spki).map { String(format: "%02x", $0) }.joined()
     XCTAssertEqual(hash, Self.vectors["payriffPublicKeySha256"] as? String)
     let output = try PayriffCardCrypto.encrypt(card: Data("{}".utf8), spki: spki)
-    XCTAssertGreaterThanOrEqual(output.secretKey.count, 256)
+    XCTAssertGreaterThanOrEqual(output.wrappedKey.count, 256)
   }
 
   func testRejectsBadInput() {
@@ -156,6 +156,35 @@ final class RunnerTests: XCTestCase {
       XCTAssertTrue(PayriffExternalUrl.mayLaunch(url), url)
     }
     XCTAssertEqual(PayriffExternalUrl.scheme(of: "Bank+App.V2-x://pay"), "bank+app.v2-x")
+  }
+
+  func testWebsiteDataOfVisitedSites() {
+    let hosts: Set<String> = ["acs.bank.example", "sb-api.payriff.com"]
+    for site in ["bank.example", "acs.bank.example", "Payriff.com", "sb-api.payriff.com"] {
+      XCTAssertTrue(PayriffPlugin.isVisitedSite(site, hosts: hosts), site)
+    }
+    for site in ["", "ank.example", "other-bank.example", "pay.payriff.com"] {
+      XCTAssertFalse(PayriffPlugin.isVisitedSite(site, hosts: hosts), site)
+    }
+
+    let plugin = PayriffPlugin()
+    let invalid = expectation(description: "clearWebsiteData without hosts")
+    plugin.handle(
+      FlutterMethodCall(methodName: "clearWebsiteData", arguments: [String: Any]())
+    ) { value in
+      XCTAssertEqual((value as? FlutterError)?.code, "invalid_argument")
+      invalid.fulfill()
+    }
+    let empty = expectation(description: "clearWebsiteData with no hosts")
+    plugin.handle(
+      FlutterMethodCall(
+        methodName: "clearWebsiteData",
+        arguments: ["hosts": [String](), "origins": [String](), "urls": [String]()])
+    ) { value in
+      XCTAssertNil(value)
+      empty.fulfill()
+    }
+    waitForExpectations(timeout: 5)
   }
 
   func testChannelSurface() {
@@ -200,9 +229,9 @@ final class RunnerTests: XCTestCase {
         ])
     ) { value in
       let map = value as? [String: String]
-      XCTAssertEqual(map?.keys.sorted(), ["encryptedMessage", "secretKey"])
+      XCTAssertEqual(map?.keys.sorted(), ["encryptedMessage", "wrappedKey"])
       XCTAssertEqual(Data(base64Encoded: map?["encryptedMessage"] ?? "")?.count, 2 + 16)
-      XCTAssertEqual(Data(base64Encoded: map?["secretKey"] ?? "")?.count, 256)
+      XCTAssertEqual(Data(base64Encoded: map?["wrappedKey"] ?? "")?.count, 256)
       encrypted.fulfill()
     }
 

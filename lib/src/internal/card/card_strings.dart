@@ -48,6 +48,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'pay': 'Ödə',
           'secure': 'PCI DSS ilə təhlükəsiz ödəniş',
           'poweredBy': 'Payriff tərəfindən hazırlanıb',
+          'notPayable': 'Bu sifarişi kartla ödəmək mümkün deyil',
         },
       },
       'en': <String, Map<String, String>>{
@@ -89,6 +90,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'pay': 'Pay',
           'secure': 'Proceed securely by PCI DSS',
           'poweredBy': 'Powered by Payriff',
+          'notPayable': 'This order cannot be paid by card',
         },
       },
       'ru': <String, Map<String, String>>{
@@ -130,6 +132,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'pay': 'Оплатить',
           'secure': 'Безопасная оплата по PCI DSS',
           'poweredBy': 'При поддержке Payriff',
+          'notPayable': 'Этот заказ нельзя оплатить картой',
         },
       },
     };
@@ -170,6 +173,10 @@ final class PayriffCardStrings {
   /// The payment view's footer, for example "Powered by Payriff". The view
   /// shows the logo in place of "Payriff" ([poweredByParts]).
   String get poweredBy => _table['view']!['poweredBy']!;
+
+  /// The payment view's error line for an order that loaded but cannot be
+  /// paid by card: "This order cannot be paid by card".
+  String get notPayable => _table['view']!['notPayable']!;
 
   /// [poweredBy] split at "Payriff" (CONTRACT §16.14): the text before and
   /// after it, where the logo goes. `null` when the copy has no "Payriff".

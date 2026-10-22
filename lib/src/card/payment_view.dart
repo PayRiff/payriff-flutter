@@ -53,10 +53,6 @@ abstract final class PaymentViewAssets {
   static const List<String> all = <String>[mastercard, visa, logo];
 }
 
-/// The error line for an order that loaded but cannot be paid by card
-/// (CONTRACT §16.14).
-const String orderNotPayableMessage = 'This order cannot be paid';
-
 /// The Pay button's title (CONTRACT §16.14): `view.pay`, then the amount
 /// with 2 decimals and `.` as the separator, then the currency, for example
 /// "Pay 1.02 AZN". Only `view.pay` while the amount is unknown.
@@ -146,7 +142,9 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   PayriffClientOrder? _order;
   bool _loading = true;
 
-  /// Why the order cannot be paid; shown under the button.
+  /// Why the order did not load or can no longer be paid (an error
+  /// message); shown under the button. An order that loaded but cannot be
+  /// paid by card shows `view.notPayable` instead, in the view's language.
   String? _error;
 
   /// A payment ended with a status, or the order can no longer be paid.
@@ -215,11 +213,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     setState(() {
       _loading = false;
       _order = order;
-      if (error != null) {
-        _error = error.message;
-      } else if (!order!.isPayableByCard) {
-        _error = orderNotPayableMessage;
-      }
+      if (error != null) _error = error.message;
     });
     if (error != null && error.isFatal) _reportFatal(error);
   }
@@ -272,7 +266,12 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       fontSize: 12,
       fontWeight: FontWeight.w400,
     );
-    final String? error = _error;
+    final PayriffClientOrder? order = _order;
+    // CONTRACT §16.14: an error message, or `view.notPayable` for an order
+    // that loaded but cannot be paid by card.
+    final String? error =
+        _error ??
+        (order != null && !order.isPayableByCard ? strings.notPayable : null);
 
     final Widget content = Column(
       mainAxisSize: MainAxisSize.min,
@@ -288,7 +287,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
           listenable: _card,
           builder: (BuildContext context, _) => _PayButton(
             key: paymentViewPayButtonKey,
-            title: paymentViewPayTitle(strings, _order),
+            title: paymentViewPayTitle(strings, order),
             enabled: _canPay,
             busy: _paying || _card.isProcessing,
             color: style.buttonColor ?? payriffBrandColor,

@@ -69,6 +69,9 @@ class NativeCalls {
   String? appId = testAppId;
   bool openExternalReply = true;
 
+  /// When true, `clearWebsiteData` fails with a [PlatformException].
+  bool clearWebsiteDataFails = false;
+
   List<MethodCall> named(String method) =>
       calls.where((MethodCall c) => c.method == method).toList();
 
@@ -98,6 +101,11 @@ class NativeCalls {
               return null;
             case 'openExternal':
               return openExternalReply;
+            case 'clearWebsiteData':
+              if (clearWebsiteDataFails) {
+                throw PlatformException(code: 'website_data_failed');
+              }
+              return null;
           }
           return null;
         });

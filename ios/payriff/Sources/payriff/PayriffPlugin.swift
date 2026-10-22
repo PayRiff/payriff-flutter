@@ -1,5 +1,6 @@
 import Flutter
 import UIKit
+import WebKit
 
 /// Native half of the payriff plugin, channel `payriff/native` (CONTRACT §16.11):
 ///
@@ -9,6 +10,8 @@ import UIKit
 ///   opaque cover hides the app whenever it resigns active, so app-switcher snapshots show
 ///   no card data (§16.0 item 4).
 /// - `openExternal` {url} -> bool, `UIApplication.open` after the §7.5 scheme checks.
+/// - `clearWebsiteData` {hosts, origins, urls} -> nil once WebKit is done: removes the default
+///   data store's records (all types) of the sites a payment's 3-D Secure WebViews loaded (§9.1a).
 ///
 /// Nothing here logs. Error messages are fixed strings without input data.
 public final class PayriffPlugin: NSObject, FlutterPlugin {
@@ -70,6 +73,15 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
       result(nil)
     case "openExternal":
       openExternal(args?["url"] as? String, result: result)
+    case "clearWebsiteData":
+      guard let hosts = args?["hosts"] as? [String] else {
+        result(
+          FlutterError(
+            code: "invalid_argument", message: "clearWebsiteData expects {hosts: [String]}.",
+            details: nil))
+        return
+      }
+      clearWebsiteData(hosts: hosts, result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -150,5 +162,42 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
     UIApplication.shared.open(url, options: [:]) { opened in
       result(opened)
     }
+  }
+
+  // MARK: - 3-D Secure website data (§9.1a)
+
+  /// webview_flutter's WebViews use the default data store, which the app's own WebViews share.
+  /// This removes its records, of every type, whose display name (a site such as `bank.example`)
+  /// is one of `hosts` or a parent domain of one, then replies. Data of the same sites that the
+  /// app stored itself goes with it.
+  private func clearWebsiteData(hosts: [String], result: @escaping FlutterResult) {
+    let visited = Set(hosts.map { $0.lowercased() }.filter { !$0.isEmpty })
+    guard !visited.isEmpty else {
+      result(nil)
+      return
+    }
+    // WebKit's data store is used on the main thread only.
+    DispatchQueue.main.async {
+      let store = WKWebsiteDataStore.default()
+      let types = WKWebsiteDataStore.allWebsiteDataTypes()
+      store.fetchDataRecords(ofTypes: types) { records in
+        let matching = records.filter { Self.isVisitedSite($0.displayName, hosts: visited) }
+        guard !matching.isEmpty else {
+          result(nil)
+          return
+        }
+        store.removeData(ofTypes: types, for: matching) {
+          result(nil)
+        }
+      }
+    }
+  }
+
+  /// Whether the data record of `site` belongs to one of `hosts` (lower case): `site` is the
+  /// host itself or one of its parent domains.
+  static func isVisitedSite(_ site: String, hosts: Set<String>) -> Bool {
+    let name = site.lowercased()
+    guard !name.isEmpty else { return false }
+    return hosts.contains { $0 == name || $0.hasSuffix("." + name) }
   }
 }
