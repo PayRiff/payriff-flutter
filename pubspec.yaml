@@ -1,0 +1,54 @@
+name: payriff
+description: >-
+  Payriff card payments for Flutter: a native card form that pays
+  server-created orders with the publishable key, 3-D Secure in a native sheet
+  and a verified, typed payment result.
+version: 1.0.0
+homepage: https://payriff.com
+documentation: https://docs.payriff.com
+repository: https://github.com/PayRiff/payriff-flutter
+issue_tracker: https://github.com/PayRiff/payriff-flutter/issues
+topics:
+  - payments
+  - payriff
+  - card
+  - checkout
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.38.0"
+
+platforms:
+  android:
+  ios:
+
+# Native code (channel `payriff/native`): card encryption, X-Client-App-Id,
+# screen protection and hardened external launches (CONTRACT §16.11).
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.payriff.flutter
+        pluginClass: PayriffPlugin
+      ios:
+        pluginClass: PayriffPlugin
+  # PayriffPaymentView (CONTRACT §16.14): card badges, lock and logo from
+  # spec/assets/payment-view, with their 2.0x/ and 3.0x/ variants.
+  assets:
+    - assets/payment_view/
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  webview_flutter: ^4.13.0
+  webview_flutter_android: ^4.10.0
+  webview_flutter_wkwebview: ^3.24.0
+
+dev_dependencies:
+  # Tests only: the SHA-256 pin check of the bundled RSA key (CONTRACT §16.2).
+  crypto: ^3.0.6
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  webview_flutter_platform_interface: ^2.14.0
