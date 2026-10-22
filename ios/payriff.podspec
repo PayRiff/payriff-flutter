@@ -5,11 +5,11 @@
 Pod::Spec.new do |s|
   s.name             = 'payriff'
   s.version          = '1.0.0'
-  s.summary          = 'Payriff payments for Flutter: native card encryption and screen protection.'
+  s.summary          = 'Payriff payments for Flutter: native card encryption, screen protection and device checks.'
   s.description      = <<-DESC
 Native half of the payriff Flutter plugin: card encryption (CryptoKit AES-GCM and
-RSA-OAEP-SHA256), the X-Client-App-Id value, screen protection, external launches and
-the removal of 3-D Secure website data.
+RSA-OAEP-SHA256), the X-Client-App-Id value, screen protection, external launches,
+the removal of 3-D Secure website data and the jailbreak, hooking and debugger checks.
                        DESC
   s.homepage         = 'https://payriff.com'
   s.license          = { :file => '../LICENSE' }

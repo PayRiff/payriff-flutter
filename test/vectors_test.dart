@@ -2,7 +2,7 @@
 // (synced from spec/vectors by scripts/sync-spec.sh) must pass. Each case is
 // asserted on the pure function that implements the rule and, where the
 // rule is observable, through the public API. The card flow's files are
-// asserted in card_vectors_test.dart.
+// asserted in card_vectors_test.dart, the TLS pins in tls_pinning_test.dart.
 
 import 'dart:convert';
 import 'dart:io';
@@ -325,8 +325,8 @@ void main() {
     }
   });
 
-  test('every vector file is covered by this file or by '
-      'card_vectors_test.dart', () {
+  test('every vector file is covered by this file, card_vectors_test.dart or '
+      'tls_pinning_test.dart', () {
     final Set<String> files = Directory('test/vectors')
         .listSync()
         .whereType<File>()
@@ -353,6 +353,13 @@ void main() {
       'card_strings.json',
       'card_validation.json',
     };
-    expect(files, <String>{...covered, ...coveredByCardTests});
+    // CONTRACT §16.15: hosts, pins, anchors and both chains, asserted in
+    // test/tls_pinning_test.dart.
+    const Set<String> coveredByPinningTests = <String>{'tls_pins.json'};
+    expect(files, <String>{
+      ...covered,
+      ...coveredByCardTests,
+      ...coveredByPinningTests,
+    });
   });
 }

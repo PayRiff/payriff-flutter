@@ -4,10 +4,16 @@ import 'package:flutter/services.dart';
 
 import '../error.dart';
 
+/// What the native device integrity checks found (CONTRACT §16.16):
+/// whether the device is compromised and the names of the signals that
+/// matched, for example `su binary` or `Frida`.
+typedef DeviceIntegrityReport = ({bool compromised, List<String> signals});
+
 /// The one wrapper around the plugin's `payriff/native` method channel
 /// (CONTRACT §16.11): card encryption, the app id, screen protection,
-/// hardened external launches and the removal of 3-D Secure website data
-/// (§9.1a). Nothing else in the SDK touches the channel.
+/// hardened external launches, the removal of 3-D Secure website data
+/// (§9.1a) and the device integrity checks (§16.16). Nothing else in the SDK
+/// touches the channel.
 ///
 /// Arguments and replies are never logged: `encryptCard` carries card data.
 abstract final class NativeBridge {
@@ -124,6 +130,42 @@ abstract final class NativeBridge {
     'origins': origins,
     'urls': urls,
   });
+
+  // A signal name as the plugin reports it: a few words, never a path or
+  // file contents.
+  static final RegExp _signalShape = RegExp(r'^[A-Za-z0-9 _.\-]{1,40}$');
+
+  /// CONTRACT §16.16: runs the plugin's root, jailbreak, hooking and
+  /// debugger checks. The plugin may keep its root and jailbreak file
+  /// results for the process; the hooking and debugger checks run at every
+  /// call.
+  ///
+  /// `null` when the checks cannot complete (no plugin, a platform error, or
+  /// a reply without a `compromised` flag); `deviceIntegrityReport` turns
+  /// that into a compromised device (it fails closed). Signal names of
+  /// another shape are dropped; a device with a signal counts as
+  /// compromised. Never throws.
+  static Future<DeviceIntegrityReport?> deviceIntegrity() async {
+    final Object? reply;
+    try {
+      reply = await channel.invokeMethod<Object?>('deviceIntegrity');
+    } on Object {
+      return null;
+    }
+    if (reply is! Map) return null;
+    final Object? compromised = reply['compromised'];
+    if (compromised is! bool) return null;
+    final Object? signals = reply['signals'];
+    final List<String> names = <String>[
+      if (signals is List)
+        for (final Object? signal in signals)
+          if (signal is String && _signalShape.hasMatch(signal)) signal,
+    ];
+    return (
+      compromised: compromised || names.isNotEmpty,
+      signals: List<String>.unmodifiable(names),
+    );
+  }
 
   /// Forgets the cached app id (`Payriff.debugReset`).
   static void resetCache() => _appId = null;

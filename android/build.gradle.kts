@@ -1,6 +1,7 @@
 // Native half of the payriff Flutter plugin (CONTRACT §16.11): card encryption,
-// X-Client-App-Id, FLAG_SECURE screen protection, hardened external launches and the
-// removal of 3-D Secure website data (§9.1a). No third-party runtime dependencies.
+// X-Client-App-Id, FLAG_SECURE screen protection, hardened external launches, the
+// removal of 3-D Secure website data (§9.1a) and the root, hooking and debugger checks
+// (§16.16). No third-party runtime dependencies.
 group = "com.payriff.flutter"
 version = "1.0.0"
 

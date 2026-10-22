@@ -49,6 +49,8 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'secure': 'PCI DSS ilə təhlükəsiz ödəniş',
           'poweredBy': 'Payriff tərəfindən hazırlanıb',
           'notPayable': 'Bu sifarişi kartla ödəmək mümkün deyil',
+          'deviceNotSupported':
+              'Təhlükəsizlik səbəbilə bu cihazda kartla ödəniş mümkün deyil',
         },
       },
       'en': <String, Map<String, String>>{
@@ -91,6 +93,9 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'secure': 'Proceed securely by PCI DSS',
           'poweredBy': 'Powered by Payriff',
           'notPayable': 'This order cannot be paid by card',
+          'deviceNotSupported':
+              "Card payments aren't available on this device for security "
+              'reasons',
         },
       },
       'ru': <String, Map<String, String>>{
@@ -133,6 +138,9 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'secure': 'Безопасная оплата по PCI DSS',
           'poweredBy': 'При поддержке Payriff',
           'notPayable': 'Этот заказ нельзя оплатить картой',
+          'deviceNotSupported':
+              'По соображениям безопасности оплата картой на этом '
+              'устройстве недоступна',
         },
       },
     };
@@ -177,6 +185,11 @@ final class PayriffCardStrings {
   /// The payment view's error line for an order that loaded but cannot be
   /// paid by card: "This order cannot be paid by card".
   String get notPayable => _table['view']!['notPayable']!;
+
+  /// The payment view's error line on a device where card payments are
+  /// refused (CONTRACT §16.16): "Card payments aren't available on this
+  /// device for security reasons".
+  String get deviceNotSupported => _table['view']!['deviceNotSupported']!;
 
   /// [poweredBy] split at "Payriff" (CONTRACT §16.14): the text before and
   /// after it, where the logo goes. `null` when the copy has no "Payriff".

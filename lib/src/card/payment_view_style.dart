@@ -17,6 +17,7 @@ import 'card_form_style.dart';
 ///   style: const PayriffPaymentViewStyle(
 ///     buttonColor: Color(0xFF0B57D0),
 ///     buttonCornerRadius: 8,
+///     payButtonLabel: 'Pay now', // "Pay now 1.00 AZN"
 ///     showPoweredBy: false,
 ///     formStyle: PayriffCardFormStyle(cornerRadius: 8),
 ///   ),
@@ -32,9 +33,11 @@ final class PayriffPaymentViewStyle {
     this.buttonTextStyle,
     this.buttonHeight = 44,
     this.buttonCornerRadius = 16,
+    this.payButtonLabel,
     this.secondaryTextColor,
     this.showBadges = true,
     this.showSecureNote = true,
+    this.secureNoteText,
     this.showPoweredBy = true,
     this.formStyle = const PayriffCardFormStyle(),
   }) : assert(buttonHeight >= 0),
@@ -62,6 +65,12 @@ final class PayriffPaymentViewStyle {
   /// The radius of the Pay button's corners. Defaults to 16.
   final double buttonCornerRadius;
 
+  /// The word on the Pay button, in place of "Pay". It is shown as it is in
+  /// every language, without white space around it. The amount and the
+  /// currency still follow it ("Pay now 1.00 AZN"), and it shows alone while
+  /// the amount is unknown. `null`: "Pay" in the view's language.
+  final String? payButtonLabel;
+
   /// The colour of the secure line and the "Powered by" footer. `null`:
   /// `#76787F`.
   final Color? secondaryTextColor;
@@ -74,8 +83,14 @@ final class PayriffPaymentViewStyle {
   /// Defaults to `true`.
   final bool showSecureNote;
 
+  /// The text next to the lock, in place of "Proceed securely by PCI DSS".
+  /// It is shown as it is in every language. `null`: the text in the view's
+  /// language.
+  final String? secureNoteText;
+
   /// Whether to show the "Powered by Payriff" footer at the bottom.
-  /// Defaults to `true`.
+  /// Defaults to `true`. In dark mode the logo's wordmark is light
+  /// (`#E1E4E8`).
   final bool showPoweredBy;
 
   /// The look of the card form inside the view. Its error colour and error
@@ -90,9 +105,11 @@ final class PayriffPaymentViewStyle {
     TextStyle? buttonTextStyle,
     double? buttonHeight,
     double? buttonCornerRadius,
+    String? payButtonLabel,
     Color? secondaryTextColor,
     bool? showBadges,
     bool? showSecureNote,
+    String? secureNoteText,
     bool? showPoweredBy,
     PayriffCardFormStyle? formStyle,
   }) => PayriffPaymentViewStyle(
@@ -102,9 +119,11 @@ final class PayriffPaymentViewStyle {
     buttonTextStyle: buttonTextStyle ?? this.buttonTextStyle,
     buttonHeight: buttonHeight ?? this.buttonHeight,
     buttonCornerRadius: buttonCornerRadius ?? this.buttonCornerRadius,
+    payButtonLabel: payButtonLabel ?? this.payButtonLabel,
     secondaryTextColor: secondaryTextColor ?? this.secondaryTextColor,
     showBadges: showBadges ?? this.showBadges,
     showSecureNote: showSecureNote ?? this.showSecureNote,
+    secureNoteText: secureNoteText ?? this.secureNoteText,
     showPoweredBy: showPoweredBy ?? this.showPoweredBy,
     formStyle: formStyle ?? this.formStyle,
   );
@@ -118,9 +137,11 @@ final class PayriffPaymentViewStyle {
       other.buttonTextStyle == buttonTextStyle &&
       other.buttonHeight == buttonHeight &&
       other.buttonCornerRadius == buttonCornerRadius &&
+      other.payButtonLabel == payButtonLabel &&
       other.secondaryTextColor == secondaryTextColor &&
       other.showBadges == showBadges &&
       other.showSecureNote == showSecureNote &&
+      other.secureNoteText == secureNoteText &&
       other.showPoweredBy == showPoweredBy &&
       other.formStyle == formStyle;
 
@@ -132,9 +153,11 @@ final class PayriffPaymentViewStyle {
     buttonTextStyle,
     buttonHeight,
     buttonCornerRadius,
+    payButtonLabel,
     secondaryTextColor,
     showBadges,
     showSecureNote,
+    secureNoteText,
     showPoweredBy,
     formStyle,
   );

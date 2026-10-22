@@ -12,6 +12,7 @@ import 'internal/card/card_clock.dart';
 import 'internal/card/card_crypto.dart';
 import 'internal/card/card_flow.dart';
 import 'internal/card/client_api.dart';
+import 'internal/card/device_integrity.dart';
 import 'internal/language.dart';
 import 'internal/logger.dart';
 import 'internal/native_bridge.dart';
@@ -53,8 +54,6 @@ abstract final class Payriff {
 
   static PayriffConfig? _config;
   static bool _cardPaymentActive = false;
-  static final StreamController<PayriffLogEntry> _logs =
-      StreamController<PayriffLogEntry>.broadcast();
 
   /// The configuration passed to [configure], or `null`.
   static PayriffConfig? get config => _config;
@@ -67,7 +66,7 @@ abstract final class Payriff {
   /// This is a broadcast stream; entries emitted while nobody listens are
   /// dropped. In debug builds each entry's `formatted` line is also printed
   /// to the console; profile and release builds print nothing.
-  static Stream<PayriffLogEntry> get logStream => _logs.stream;
+  static Stream<PayriffLogEntry> get logStream => sdkLogStream;
 
   /// Sets the SDK configuration. Calling it again replaces the configuration
   /// for later calls; a payment that is already running keeps the old one.
@@ -103,11 +102,17 @@ abstract final class Payriff {
   /// 1. The form is validated. Invalid fields are shown and the result is
   ///    [PayriffResultFailed] with [PayriffErrorCode.validationFailed] and
   ///    `PayriffError.fields`; no request is made.
-  /// 2. The order must be `CREATED` or `PENDING` and accept `CARD`, else
+  /// 2. The device is checked (CONTRACT §16.16). On a rooted or jailbroken
+  ///    device, with a hooking framework or a debugger on a release build,
+  ///    or when the check cannot complete, the result is
+  ///    [PayriffErrorCode.deviceCompromised] and nothing is sent, unless
+  ///    `PayriffConfig.allowCompromisedDevices` is set. The check runs again
+  ///    right before the card is encrypted.
+  /// 3. The order must be `CREATED` or `PENDING` and accept `CARD`, else
   ///    [PayriffErrorCode.orderNotPayable].
-  /// 3. The card is encrypted on the device and sent; the form is locked
+  /// 4. The card is encrypted on the device and sent; the form is locked
   ///    meanwhile ([PayriffCardController.isProcessing]).
-  /// 4. 3-D Secure runs in the SDK's sheet when the bank asks for it, then
+  /// 5. 3-D Secure runs in the SDK's sheet when the bank asks for it, then
   ///    the status is polled (every 2.5 s, up to 120 s).
   ///
   /// Once the card was sent the result is never `cancelled(userClosed)`:
@@ -200,33 +205,46 @@ abstract final class Payriff {
     bool submitted = false;
     ClientApi? api;
     PayriffResult result;
+    // CONTRACT §16.16: before anything is sent, and again right before the
+    // card is encrypted.
+    Future<PayriffError?> checkDevice(String point) => deviceIntegrityError(
+      allowCompromisedDevices: config.allowCompromisedDevices,
+      logger: logger,
+      point: point,
+    );
     try {
-      final ClientApi client = api = ClientApi(
-        baseUrl: apiBaseUrl,
-        publishableKey: publishableKey,
-        clientSecret: secret!,
-        appId: await NativeBridge.appId(),
-        clock: cardClock,
-        logger: logger,
-      );
-      final CardPayment payment = CardPayment(
-        api: client,
-        orderId: id,
-        clock: cardClock,
-        strings: strings,
-        logger: logger,
-        onSubmitted: () => submitted = true,
-        openSheet: (ThreeDsSession session) => _openThreeDsSheet(
-          context.mounted ? context : navigator.context,
-          navigator,
-          material,
-          strings,
-          logger,
-          session,
-        ),
-      );
-      logger.info('confirmCardPayment: order $id');
-      result = await payment.run(card);
+      final PayriffError? refused = await checkDevice('confirmCardPayment');
+      if (refused != null) {
+        result = PayriffResultFailed(error: refused);
+      } else {
+        final ClientApi client = api = ClientApi(
+          baseUrl: apiBaseUrl,
+          publishableKey: publishableKey,
+          clientSecret: secret!,
+          appId: await NativeBridge.appId(),
+          clock: cardClock,
+          logger: logger,
+        );
+        final CardPayment payment = CardPayment(
+          api: client,
+          orderId: id,
+          clock: cardClock,
+          strings: strings,
+          logger: logger,
+          onSubmitted: () => submitted = true,
+          checkDevice: () => checkDevice('card encryption'),
+          openSheet: (ThreeDsSession session) => _openThreeDsSheet(
+            context.mounted ? context : navigator.context,
+            navigator,
+            material,
+            strings,
+            logger,
+            session,
+          ),
+        );
+        logger.info('confirmCardPayment: order $id');
+        result = await payment.run(card);
+      }
     } finally {
       _cardPaymentActive = false;
       api?.close();
@@ -239,11 +257,13 @@ abstract final class Payriff {
       '${result.error == null ? '' : ' (${result.error!.code.value})'}',
     );
     // CONTRACT §16.5: the card values do not outlive a final result (or a
-    // card that was sent, or an order that can no longer be paid).
+    // card that was sent, an order that can no longer be paid, or a device
+    // the card may not be paid from).
     if (submitted ||
         result is! PayriffResultFailed ||
         result.error.isFatal ||
-        result.error.code == PayriffErrorCode.orderNotPayable) {
+        result.error.code == PayriffErrorCode.orderNotPayable ||
+        result.error.code == PayriffErrorCode.deviceCompromised) {
       clearCardForm(controller);
     }
     return result;
@@ -291,6 +311,19 @@ abstract final class Payriff {
       api.close();
     }
   }
+
+  /// Whether this device is compromised (CONTRACT §16.16): rooted or
+  /// jailbroken, with a hooking framework such as Frida loaded, or with a
+  /// debugger attached to a release build. Card payments are refused on such
+  /// a device unless `PayriffConfig.allowCompromisedDevices` is set.
+  ///
+  /// Ask it early, for example to offer another payment method. It reports
+  /// the device whatever `allowCompromisedDevices` says and needs no
+  /// [configure]. Never throws: `true` when the checks cannot complete (for
+  /// example without the plugin's native part), as a payment would then be
+  /// refused too.
+  static Future<bool> isDeviceCompromised() async =>
+      (await deviceIntegrityReport()).compromised;
 
   /// Clears the configuration and the in-progress guard. For tests only.
   @visibleForTesting
@@ -352,16 +385,7 @@ abstract final class Payriff {
     return _PresentedThreeDsSheet(presenter);
   }
 
-  static SdkLogger _loggerFor(PayriffConfig config) =>
-      SdkLogger(enabled: config.enableLogging, sink: _emit);
-
-  // Entries reach logStream in every build mode, but only debug builds print
-  // them: a release build must not write the payment trail to the device log
-  // (logcat, os_log), where adb, Console or a log collector can read it.
-  static void _emit(PayriffLogEntry entry) {
-    _logs.add(entry);
-    if (kDebugMode) debugPrint(entry.formatted);
-  }
+  static SdkLogger _loggerFor(PayriffConfig config) => sdkLoggerFor(config);
 }
 
 final class _PresentedThreeDsSheet implements ThreeDsSheet {

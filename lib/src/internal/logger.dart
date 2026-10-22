@@ -1,7 +1,30 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import '../config.dart';
 import '../log.dart';
 
 /// Receives every emitted log entry.
 typedef LogSink = void Function(PayriffLogEntry entry);
+
+final StreamController<PayriffLogEntry> _entries =
+    StreamController<PayriffLogEntry>.broadcast();
+
+/// The entries of every [sdkLoggerFor] logger (`Payriff.logStream`).
+Stream<PayriffLogEntry> get sdkLogStream => _entries.stream;
+
+/// The SDK's logger for [config]: on while `PayriffConfig.enableLogging` is.
+SdkLogger sdkLoggerFor(PayriffConfig? config) =>
+    SdkLogger(enabled: config?.enableLogging ?? false, sink: _emit);
+
+// Entries reach logStream in every build mode, but only debug builds print
+// them: a release build must not write the payment trail to the device log
+// (logcat, os_log), where adb, Console or a log collector can read it.
+void _emit(PayriffLogEntry entry) {
+  _entries.add(entry);
+  if (kDebugMode) debugPrint(entry.formatted);
+}
 
 /// The SDK's internal logger. Entries are dropped unless [enabled].
 final class SdkLogger {

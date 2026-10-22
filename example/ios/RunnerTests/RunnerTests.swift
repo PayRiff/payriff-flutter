@@ -7,7 +7,8 @@ import XCTest
 @testable import payriff
 
 /// Native tests of the payriff plugin: every case of `test/vectors/card_crypto.json`
-/// (CONTRACT §16.6), the external-URL rules (§7.5) and the channel surface.
+/// (CONTRACT §16.6), the external-URL rules (§7.5), the device integrity checks (§16.16) and the
+/// channel surface.
 final class RunnerTests: XCTestCase {
   private static let vectors: [String: Any] = {
     // RunnerTests.swift sits in example/ios/RunnerTests; the vectors are in the package's test/.
@@ -250,6 +251,155 @@ final class RunnerTests: XCTestCase {
     }
     XCTAssertEqual(plugin.secureCount, 1)
 
+    // The tests run on the simulator, where nothing is checked (§16.16).
+    let integrity = expectation(description: "deviceIntegrity")
+    plugin.handle(FlutterMethodCall(methodName: "deviceIntegrity", arguments: nil)) { value in
+      let map = value as? [String: Any]
+      XCTAssertEqual(map?["compromised"] as? Bool, false)
+      XCTAssertEqual(map?["signals"] as? [String], [])
+      XCTAssertTrue(Thread.isMainThread)
+      integrity.fulfill()
+    }
+
     waitForExpectations(timeout: 5)
+  }
+
+  // MARK: - Device integrity (§16.16)
+
+  private final class FakeProbes: PayriffIntegrityProbes {
+    var isSimulator = false
+    var hasEmbeddedProvisioningProfile = false
+    var files: Set<String> = []
+    var writable = false
+    var images = ["/usr/lib/libSystem.B.dylib", "/System/Library/Frameworks/UIKit.framework/UIKit"]
+    var environment: [String: String] = [:]
+    var fridaServer = false
+    var traced = false
+    var calls: [String] = []
+
+    func fileExists(_ path: String) -> Bool {
+      calls.append("file \(path)")
+      return files.contains(path)
+    }
+
+    func canWriteFile(atPath path: String) -> Bool {
+      calls.append("write \(path)")
+      return writable
+    }
+
+    func loadedImages() -> [String] {
+      calls.append("images")
+      return images
+    }
+
+    func environmentValue(_ name: String) -> String? {
+      calls.append("env \(name)")
+      return environment[name]
+    }
+
+    func acceptsLoopbackConnection(port: UInt16, timeout: TimeInterval) -> Bool {
+      calls.append("tcp \(port) \(timeout)")
+      return fridaServer
+    }
+
+    func isTraced() -> Bool {
+      calls.append("traced")
+      return traced
+    }
+  }
+
+  private func signals(_ setUp: (FakeProbes) -> Void) -> [String] {
+    let probes = FakeProbes()
+    setUp(probes)
+    return PayriffDeviceIntegrity(probes: probes).signals()
+  }
+
+  func testIntegrityOfACleanDevice() {
+    let probes = FakeProbes()
+    XCTAssertEqual(PayriffDeviceIntegrity(probes: probes).signals(), [])
+    XCTAssertTrue(probes.calls.contains("tcp 27042 0.1"), "frida-server on 127.0.0.1:27042, 100 ms")
+    XCTAssertTrue(probes.calls.contains("write /private/payriff-jb-check"))
+  }
+
+  func testIntegrityEachJailbreakFileAndTheSandboxWrite() {
+    XCTAssertEqual(PayriffDeviceIntegrity.jailbreakFiles.count, 20)
+    for path in PayriffDeviceIntegrity.jailbreakFiles {
+      XCTAssertEqual(signals { $0.files = [path] }, ["jailbreak files"], path)
+    }
+    XCTAssertEqual(signals { $0.writable = true }, ["sandbox write"])
+  }
+
+  func testIntegrityHookingLibrariesInsertedLibrariesAndFridaServer() {
+    for part in PayriffDeviceIntegrity.hookingImages {
+      let expected = part.lowercased().contains("frida") ? "Frida" : "hooking library"
+      XCTAssertEqual(
+        signals { $0.images.append("/usr/lib/tweaks/\(part.uppercased()).dylib") }, [expected], part)
+    }
+    XCTAssertEqual(
+      signals {
+        $0.images += ["/usr/lib/TweakInject/a.dylib", "/private/var/tmp/FridaGadget.dylib"]
+      },
+      ["hooking library", "Frida"])
+    XCTAssertEqual(signals { $0.environment["DYLD_INSERT_LIBRARIES"] = "/x.dylib" }, ["DYLD_INSERT_LIBRARIES"])
+    XCTAssertEqual(signals { $0.environment["DYLD_INSERT_LIBRARIES"] = "" }, [])
+    XCTAssertEqual(signals { $0.fridaServer = true }, ["frida-server"])
+  }
+
+  func testIntegrityInsertedLibrariesOnlyInAppStoreAndTestFlightBuilds() {
+    XCTAssertEqual(
+      signals { $0.environment["DYLD_INSERT_LIBRARIES"] = "/x.dylib" }, ["DYLD_INSERT_LIBRARIES"])
+    // A development build (embedded.mobileprovision) that Xcode runs with its Main Thread Checker.
+    let probes = FakeProbes()
+    probes.hasEmbeddedProvisioningProfile = true
+    probes.environment["DYLD_INSERT_LIBRARIES"] = "/usr/lib/libMainThreadChecker.dylib"
+    XCTAssertEqual(PayriffDeviceIntegrity(probes: probes).signals(), [])
+    XCTAssertFalse(probes.calls.contains("env DYLD_INSERT_LIBRARIES"))
+    // The other hooking checks still count there.
+    XCTAssertEqual(
+      signals {
+        $0.hasEmbeddedProvisioningProfile = true
+        $0.environment["DYLD_INSERT_LIBRARIES"] = "/x.dylib"
+        $0.images.append("/private/var/tmp/FridaGadget.dylib")
+        $0.fridaServer = true
+      }, ["Frida", "frida-server"])
+  }
+
+  func testIntegrityDebuggerOnlyInAppStoreAndTestFlightBuilds() {
+    XCTAssertEqual(signals { $0.traced = true }, ["debugger"])
+    // A development build (embedded.mobileprovision) is debugged from Xcode all the time.
+    XCTAssertEqual(
+      signals {
+        $0.traced = true
+        $0.hasEmbeddedProvisioningProfile = true
+      }, [])
+  }
+
+  func testIntegrityChecksNothingOnTheSimulator() {
+    let probes = FakeProbes()
+    probes.isSimulator = true
+    probes.files = Set(PayriffDeviceIntegrity.jailbreakFiles)
+    probes.writable = true
+    probes.images.append("/usr/lib/frida-agent.dylib")
+    probes.environment["DYLD_INSERT_LIBRARIES"] = "/x.dylib"
+    probes.fridaServer = true
+    probes.traced = true
+    XCTAssertEqual(PayriffDeviceIntegrity(probes: probes).signals(), [])
+    XCTAssertEqual(probes.calls, [])
+  }
+
+  func testIntegrityKeepsJailbreakResultsAndRepeatsRuntimeChecks() {
+    let probes = FakeProbes()
+    let integrity = PayriffDeviceIntegrity(probes: probes)
+    XCTAssertEqual(integrity.signals(), [])
+    probes.calls.removeAll()
+    probes.files = ["/bin/bash"]
+    probes.writable = true
+    probes.fridaServer = true
+    probes.traced = true
+    XCTAssertEqual(integrity.signals(), ["frida-server", "debugger"])
+    XCTAssertFalse(probes.calls.contains { $0.hasPrefix("file ") || $0.hasPrefix("write ") })
+    for call in ["images", "env DYLD_INSERT_LIBRARIES", "tcp 27042 0.1", "traced"] {
+      XCTAssertTrue(probes.calls.contains(call), call)
+    }
   }
 }

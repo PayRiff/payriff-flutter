@@ -4,7 +4,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpClient;
+import 'dart:io' show TlsException;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -18,6 +18,7 @@ import '../http_log.dart';
 import '../logger.dart';
 import '../request.dart';
 import 'card_clock.dart';
+import 'tls_pins.dart';
 
 /// Timeout of a Client API GET.
 const Duration clientGetTimeout = Duration(seconds: 15);
@@ -50,7 +51,8 @@ String clientApiBaseUrl(PayriffEnvironment environment) =>
 /// Replaces the HTTP client of new [ClientApi]s (CONTRACT §16.2: "a
 /// test-only hook may inject a transport"). For tests only: ignored outside
 /// debug builds, so a release build never hands the client secret and the
-/// encrypted card to another client.
+/// encrypted card to another client. An injected client is not pinned;
+/// without one every client is [pinnedHttpClient].
 @visibleForTesting
 http.Client Function()? debugPayriffClientApiHttpClient;
 
@@ -140,9 +142,10 @@ String newIdempotencyKey([math.Random? random]) {
 /// Every call returns the envelope's `payload` (an empty map when it has
 /// none) or throws a [PayriffException] mapped as in CONTRACT §16.3.
 final class ClientApi {
-  /// Creates a client. It owns a plain `dart:io` client (never
-  /// `http.Client()`, so a zone client from `http.runWithClient` never sees
-  /// the client secret) and closes it in [close].
+  /// Creates a client. It owns a pinned `dart:io` client
+  /// ([pinnedHttpClient], CONTRACT §16.15; never `http.Client()`, so a zone
+  /// client from `http.runWithClient` never sees the client secret) and
+  /// closes it in [close].
   ClientApi({
     required this.baseUrl,
     required String publishableKey,
@@ -157,7 +160,7 @@ final class ClientApi {
        _logger = logger ?? SdkLogger.silent,
        _client =
            (kDebugMode ? debugPayriffClientApiHttpClient?.call() : null) ??
-           IOClient(HttpClient());
+           IOClient(pinnedHttpClient());
 
   /// The API base URL without a trailing slash.
   final String baseUrl;
@@ -222,9 +225,12 @@ final class ClientApi {
       try {
         response = await _send(method, url, body, extraHeaders, timeout);
       } on PayriffException catch (e) {
+        // A pinning failure is not retried: nothing was sent, and the
+        // same server would be refused again.
         if (retryNoResponseOnce &&
             !retriedNoResponse &&
-            e.error.code == PayriffErrorCode.networkError) {
+            e.error.code == PayriffErrorCode.networkError &&
+            e.error.isRetryable) {
           retriedNoResponse = true;
           _logger.info('$method ${url.path}: no response, retrying once');
           await _clock.sleep(payNetworkRetryDelay);
@@ -299,6 +305,14 @@ final class ClientApi {
           isRetryable: true,
         ),
       );
+    } on TlsException {
+      // CONTRACT §16.15: the server's certificate failed the pinned
+      // validation (a HandshakeException or CertificateException), so the
+      // TLS handshake ended before the request was sent.
+      _logger.warning(
+        '$method ${url.path}: the server certificate could not be verified',
+      );
+      throw const PayriffException(pinningFailure);
     } on Object {
       // The exception text is not kept: an HTTP client may quote headers.
       _logger.warning('$method ${url.path} failed: no response');

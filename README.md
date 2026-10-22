@@ -20,9 +20,13 @@ it is built on.
 - **Verified results**: the SDK reads the order status from Payriff. The
   result drives your UI; your server fulfils the order (see
   [Fulfil on your server](#fulfil-on-your-server)).
+- **Pinned connections and device checks**: the SDK's API calls trust only
+  Payriff's certificate authorities, and card payments are refused on rooted
+  or jailbroken devices and with hooking tools such as Frida (see
+  [Security](#security)).
 - A Flutter plugin on top of `webview_flutter`. Its small native part (card
   encryption, app id, screen protection, hardened app hand-offs, removing
-  3-D Secure website data) needs no setup.
+  3-D Secure website data, device checks) needs no setup.
 
 ## Requirements
 
@@ -140,6 +144,12 @@ PayriffPaymentView(
 - A failure with `error.isRetryable` (no answer, or a server error) leaves
   the order payable: show the view again with the same `orderId` and
   `clientSecret`.
+- On a compromised device (rooted or jailbroken, a hooking tool such as
+  Frida, or a debugger on a release build) the view does not read the order.
+  It says "Card payments aren't available on this device for security
+  reasons" in its language, keeps Pay disabled and passes
+  `failed(DEVICE_COMPROMISED)` to `onResult` once. See
+  [Security](#security).
 - Call `Payriff.configure` before you show it.
 
 ### Page, bottom sheet or dialog
@@ -228,10 +238,12 @@ PayriffPaymentView(
 | `buttonColor` | Payriff's brand colour `#4DBDC6` |
 | `buttonTextStyle` | 16 semibold, white; merged over the default |
 | `buttonHeight`, `buttonCornerRadius` | 44, 16 |
+| `payButtonLabel` | `null`: "Pay" in the view's language. Your word shows as it is in every language, and the amount and currency still follow it ("Pay now 1.00 AZN") |
 | `secondaryTextColor` | `#76787F`: the secure line and the footer |
 | `showBadges` | `true`: the Mastercard and Visa badges under the button |
 | `showSecureNote` | `true`: the lock and "Proceed securely by PCI DSS" |
-| `showPoweredBy` | `true`: the "Powered by Payriff" footer |
+| `secureNoteText` | `null`: "Proceed securely by PCI DSS" in the view's language. Your text shows as it is in every language |
+| `showPoweredBy` | `true`: the "Powered by Payriff" footer; in dark mode the logo's wordmark is light (`#E1E4E8`) |
 | `formStyle` | `PayriffCardFormStyle()`, see [Customise the card form](#customise-the-card-form) |
 
 The view follows your app's theme brightness (`Theme`, or `CupertinoTheme`
@@ -387,17 +399,21 @@ otherwise `focusedBorderColor` while one of its fields has the focus.
 
 1. The form is validated. An invalid form shows its errors and returns
    `failed(VALIDATION_FAILED)` with `error.fields`; nothing is sent.
-2. The order must be `CREATED` or `PENDING` and accept `CARD`, otherwise
+2. The device is checked (see [Security](#security)). On a compromised
+   device the result is `failed(DEVICE_COMPROMISED)` and nothing is sent.
+   The check runs again right before the card is encrypted.
+3. The order must be `CREATED` or `PENDING` and accept `CARD`, otherwise
    the result is `failed(ORDER_NOT_PAYABLE)`.
-3. The card is encrypted on the device and sent with `X-Client-App-Id` (your
-   bundle id or package name). A `429` is retried three times (1 s, 2 s,
-   4 s) and a request without an answer once, with the same idempotency key.
-4. When the bank asks for 3-D Secure, its page opens in the SDK's sheet (a
+4. The card is encrypted on the device and sent over a pinned connection
+   with `X-Client-App-Id` (your bundle id or package name). A `429` is
+   retried three times (1 s, 2 s, 4 s) and a request without an answer once,
+   with the same idempotency key.
+5. When the bank asks for 3-D Secure, its page opens in the SDK's sheet (a
    Cupertino-style sheet on iOS, a Material bottom sheet on Android) with a
    title, a close button and a native loader; bank pages get margins, so they
    do not run to the screen edges. The 3-D Secure Method runs invisibly
    behind the loader.
-5. The status is polled every 2.5 s for up to 120 s.
+6. The status is polled every 2.5 s for up to 120 s.
 
 Once the card was sent the result is never `cancelled(userClosed)`: closing
 the 3-D Secure sheet (✕, a pull on the header, or the Android back gesture)
@@ -422,6 +438,7 @@ configuration applies to later calls.
 | `environment` | `production` | `production` uses `https://api.payriff.com`, `sandbox` uses `https://sb-api.payriff.com`. The sandbox host is provisional until Payriff confirms it. |
 | `language` | `null` | `PayriffLanguage.az`, `en` or `ru` for the form and the 3-D Secure sheet. `null` uses the device language (Azerbaijani, Russian, otherwise English). |
 | `enableLogging` | `false` | See [Logging](#logging). |
+| `allowCompromisedDevices` | `false` | `true` lets card payments run on a rooted or jailbroken device, with a hooking tool or with a debugger on a release build, and only logs a warning that names what was found. For development on test devices only, never in an app you ship. See [Security](#security). |
 
 ## Handling `PayriffResult`
 
@@ -433,7 +450,7 @@ configuration applies to later calls.
 | `PayriffResultDeclined` | Status `DECLINED`. | `payment` |
 | `PayriffResultCancelled` | `reason`: `canceled` (`CANCELED`) or `expired` (`EXPIRED`, `PREAUTH_EXPIRED`). | `payment` |
 | `PayriffResultPending` | `reason`: `notFinal` (not final after polling, or the sheet was closed with a non-final status), `verificationFailed` (the status could no longer be read), `unexpectedStatus` (for example `REFUNDED`). Verify on your server. | `payment` |
-| `PayriffResultFailed` | The payment could not start or run: configuration, arguments, an invalid form, an order that cannot be paid or a Client API error. | `error` |
+| `PayriffResultFailed` | The payment could not start or run: configuration, arguments, an invalid form, an order that cannot be paid, a compromised device or a Client API error. | `error` |
 
 `PayriffPayment` carries `orderId`, `status` (`PayriffPaymentStatus`),
 `rawStatus`, `amount` and `currency` (from the status check), and
@@ -448,7 +465,8 @@ Every result also has these helpers:
   present and unknown values are `null`.
 
 Other helpers: `Payriff.version`, `Payriff.config`,
-`Payriff.isPaymentInProgress` and `PayriffPaymentStatus.parse(raw)`.
+`Payriff.isPaymentInProgress`, `Payriff.isDeviceCompromised()` (see
+[Security](#security)) and `PayriffPaymentStatus.parse(raw)`.
 
 ### Errors
 
@@ -472,7 +490,8 @@ be paid from the app; create a new order) and, for `validationFailed`,
 | `rateLimited` | HTTP 429 after the SDK's retries. Fatal. |
 | `paymentFailed` | Any other unsuccessful answer, with Payriff's message. The customer may try again. |
 | `unexpectedResponse` | Payriff's next step could not be understood and the status was not final. |
-| `networkError` | Offline, DNS, TLS or timeout. |
+| `deviceCompromised` | The device is rooted or jailbroken, a hooking tool or a debugger on a release build was found, or the check could not complete, and `allowCompromisedDevices` is off. Nothing was sent. Not fatal: the order can be paid on another device. |
+| `networkError` | Offline, DNS, TLS or timeout. When Payriff's server certificate fails the SDK's pinning, `isRetryable` is `false` and the message is "Payriff's server certificate could not be verified."; nothing was sent. |
 | `unknown` | Anything else, for example a device that cannot encrypt. |
 | `apiError` | Part of the code set shared by all Payriff SDKs; the card flow does not produce it. |
 
@@ -503,6 +522,45 @@ does not reach the device log (logcat, Console); entries still reach
 `logStream` while `enableLogging` is on. Leave logging off in production
 unless you collect the entries yourself.
 
+## Security
+
+- **Certificate pinning.** Every Client API call of the SDK (order, pay,
+  3-D Secure steps, status) to `api.payriff.com` and `sb-api.payriff.com`
+  trusts only Payriff's certificate authorities: the current Sectigo roots
+  and backup roots of other major CAs, never the device's trust store. A
+  certificate that fails the check, for example from a proxy such as Charles
+  or Burp, fails the call with `networkError` (`isRetryable: false`,
+  "Payriff's server certificate could not be verified."); nothing is sent.
+  No setting turns it off, in any build, and an app-wide `HttpOverrides`
+  that accepts other certificates does not change it (release builds ignore
+  app-wide `HttpOverrides` altogether). Debug builds log every request and
+  response (see [Logging](#logging)), so you do not need a proxy to see the
+  traffic.
+- **Not pinned: the 3-D Secure pages.** They are the banks' pages and load
+  in the SDK's WebView with the system's usual certificate checks.
+- **Device integrity.** Card payments are refused on rooted (Android) and
+  jailbroken (iOS) devices and when a hooking framework (Frida, Xposed or
+  LSPosed, Substrate and the like) or a debugger attached to a release build
+  is found. The SDK checks when the payment view appears, when
+  `confirmCardPayment` starts and right before the card is encrypted: the
+  result is `failed(DEVICE_COMPROMISED)` and nothing is sent, and the
+  payment view says that card payments aren't available on this device.
+  `Payriff.retrieveOrder` is never blocked. `Payriff.isDeviceCompromised()`
+  lets you offer another payment method early. A debugger counts only on
+  release builds (on iOS: App Store and TestFlight builds). On iOS,
+  `DYLD_INSERT_LIBRARIES` also counts only in App Store and TestFlight
+  builds, because Xcode sets it when it runs your app. Nothing is checked on
+  the iOS simulator. If the check cannot complete (for example without the
+  plugin's native part), the device counts as compromised with the signal
+  `check failed`, so breaking the check does not skip it. The checks run on
+  the device, so a determined attacker can get past them; they stop the
+  common tools.
+- **Opting out for development.** On a rooted or jailbroken test device,
+  pass `allowCompromisedDevices: true` to `PayriffConfig`, for example
+  `allowCompromisedDevices: kDebugMode` so that it never reaches a release
+  build. The SDK then only logs a warning that names what it found (such as
+  `su binary`, `Magisk` or `Frida`).
+
 ## Platform setup
 
 ### Android
@@ -519,6 +577,9 @@ unless you collect the entries yourself.
 - The 3-D Secure WebView has third-party cookies on (bank pages need them)
   and file and content-provider access off. Its JavaScript dialogs use the
   WebView's own dialogs.
+- The plugin's manifest lists known root manager and Xposed manager apps in
+  `<queries>`, so the device check can see them on Android 11 and later.
+  Nothing to add; no permission is needed.
 
 ### iOS
 
@@ -581,6 +642,8 @@ See [example/README.md](example/README.md).
 | `sessionExpired` | The order does not exist in the selected environment, or its `clientSecret` expired. Create a new order. |
 | `orderNotPayable` | The order was already paid, expired, or does not accept cards. |
 | Blank 3-D Secure page or `networkError` in Android release builds | Add the `INTERNET` permission to the main manifest. |
+| `networkError`: "Payriff's server certificate could not be verified." | A proxy (Charles, Burp, mitmproxy) or a network that intercepts TLS sits between the app and Payriff. The SDK's connections are pinned: turn the proxy off and use the debug logs to see the traffic. |
+| `deviceCompromised` on a test device | The device is rooted or jailbroken (Android emulator images with `su` count too), a hooking tool such as Frida runs, a debugger is attached to a release build, or the check could not complete (`check failed`, for example in widget tests, which have no native plugin). Turn on `enableLogging` to see which signal matched. For development and tests, set `allowCompromisedDevices` in debug builds only. |
 | `presentationFailed` | The `BuildContext` has no `Navigator` above it (for example a context above `MaterialApp`). |
 | Payment lost after the app was killed | The app process ended mid-payment. Reconcile the order on your server. |
 

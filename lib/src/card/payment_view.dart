@@ -8,7 +8,9 @@ import 'package:flutter/material.dart';
 import '../config.dart';
 import '../error.dart';
 import '../internal/card/card_strings.dart';
+import '../internal/card/device_integrity.dart';
 import '../internal/language.dart';
+import '../internal/logger.dart';
 import '../internal/ui/glyphs.dart';
 import '../payriff.dart';
 import '../result.dart';
@@ -46,25 +48,37 @@ abstract final class PaymentViewAssets {
   /// The Visa acceptance badge, 42×28.
   static const String visa = 'assets/payment_view/visa.png';
 
-  /// The Payriff logo of the footer, 82×16.
+  /// The Payriff logo of the footer in light mode, 82×16.
   static const String logo = 'assets/payment_view/payriff-logo.png';
 
+  /// The Payriff logo of the footer in dark mode, 82×16: the wordmark in
+  /// `#E1E4E8`.
+  static const String logoDark = 'assets/payment_view/payriff-logo-dark.png';
+
   /// Every image.
-  static const List<String> all = <String>[mastercard, visa, logo];
+  static const List<String> all = <String>[mastercard, visa, logo, logoDark];
+
+  /// The footer's logo: [logo], or [logoDark] in dark mode.
+  static String footerLogo({required bool dark}) => dark ? logoDark : logo;
 }
 
-/// The Pay button's title (CONTRACT §16.14): `view.pay`, then the amount
+/// The Pay button's title (CONTRACT §16.14): `view.pay`, or [label] (the
+/// style's `payButtonLabel`) without white space around it, then the amount
 /// with 2 decimals and `.` as the separator, then the currency, for example
-/// "Pay 1.02 AZN". Only `view.pay` while the amount is unknown.
+/// "Pay 1.02 AZN". Only the word while the amount is unknown.
 String paymentViewPayTitle(
   PayriffCardStrings strings,
-  PayriffClientOrder? order,
-) {
+  PayriffClientOrder? order, {
+  String? label,
+}) {
+  // A blank label counts as none (CONTRACT §16.14).
+  final String? custom = label?.trim();
+  final String pay = custom == null || custom.isEmpty ? strings.pay : custom;
   final num? amount = order?.amount;
-  if (amount == null || !amount.isFinite) return strings.pay;
+  if (amount == null || !amount.isFinite) return pay;
   final String currency = order?.currency?.trim() ?? '';
   return <String>[
-    strings.pay,
+    if (pay.isNotEmpty) pay,
     amount.toStringAsFixed(2),
     if (currency.isNotEmpty) currency,
   ].join(' ');
@@ -83,6 +97,13 @@ String paymentViewPayTitle(
 /// paid by card or did not load (an error line then says why), while the
 /// form is incomplete and while paying. A fatal error (for example an
 /// expired client secret) is also passed to [onResult], once.
+///
+/// On a compromised device (rooted or jailbroken, a hooking framework such
+/// as Frida, a debugger on a release build, or a check that cannot
+/// complete; CONTRACT §16.16) the view does not read the order: it says
+/// that card payments are not available on this device, keeps Pay disabled
+/// and passes [PayriffErrorCode.deviceCompromised] to [onResult], once. With
+/// `PayriffConfig.allowCompromisedDevices` it only logs a warning.
 ///
 /// Give it the whole screen, for example as a `Scaffold` body: it scrolls
 /// when the keyboard is up and keeps the footer at the bottom when there is
@@ -121,15 +142,16 @@ class PayriffPaymentView extends StatefulWidget {
   final String clientSecret;
 
   /// Called with the result of each payment attempt, and once with a fatal
-  /// error that ends the order (`PayriffError.isFatal`). The result is for
-  /// the user interface: fulfil the order on your server.
+  /// error that ends the order (`PayriffError.isFatal`) or with
+  /// [PayriffErrorCode.deviceCompromised]. The result is for the user
+  /// interface: fulfil the order on your server.
   final ValueChanged<PayriffResult> onResult;
 
   /// The language of the view and the form. `null` uses
   /// `PayriffConfig.language`, then the device language.
   final PayriffLanguage? language;
 
-  /// The colours, sizes and parts of the view, and the form's look.
+  /// The colours, sizes, texts and parts of the view, and the form's look.
   final PayriffPaymentViewStyle style;
 
   @override
@@ -149,8 +171,15 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
 
   /// A payment ended with a status, or the order can no longer be paid.
   bool _finished = false;
+
+  /// CONTRACT §16.16: card payments are refused on this device; the error
+  /// line shows `view.deviceNotSupported`.
+  bool _deviceRefused = false;
   bool _paying = false;
-  bool _fatalReported = false;
+
+  /// A failure that ends this view's order (fatal, or a refused device) was
+  /// passed to `onResult`.
+  bool _failureReported = false;
 
   /// Bumped for every order load, so a stale answer is dropped.
   int _loadGeneration = 0;
@@ -158,6 +187,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   bool get _payable =>
       !_loading &&
       !_finished &&
+      !_deviceRefused &&
       _error == null &&
       (_order?.isPayableByCard ?? false);
 
@@ -167,7 +197,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   @override
   void initState() {
     super.initState();
-    unawaited(_loadOrder());
+    unawaited(_start());
   }
 
   @override
@@ -175,8 +205,8 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.orderId != widget.orderId ||
         oldWidget.clientSecret != widget.clientSecret) {
-      _fatalReported = false;
-      unawaited(_loadOrder());
+      _failureReported = false;
+      unawaited(_start());
     }
   }
 
@@ -187,13 +217,34 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     super.dispose();
   }
 
-  /// CONTRACT §16.14: reads the order when the view appears.
-  Future<void> _loadOrder() async {
+  /// When the view appears: checks the device (CONTRACT §16.16), then reads
+  /// the order (§16.14). The order is not read on a refused device.
+  Future<void> _start() async {
     final int generation = ++_loadGeneration;
     _order = null;
     _error = null;
     _finished = false;
+    _deviceRefused = false;
     _loading = true;
+    final PayriffConfig? config = Payriff.config;
+    final PayriffError? refused = await deviceIntegrityError(
+      allowCompromisedDevices: config?.allowCompromisedDevices ?? false,
+      logger: sdkLoggerFor(config),
+      point: 'payment view',
+    );
+    if (!mounted || generation != _loadGeneration) return;
+    if (refused != null) {
+      setState(() {
+        _loading = false;
+        _deviceRefused = true;
+      });
+      _reportOnce(refused);
+      return;
+    }
+    await _loadOrder(generation);
+  }
+
+  Future<void> _loadOrder(int generation) async {
     PayriffClientOrder? order;
     PayriffError? error;
     try {
@@ -215,12 +266,12 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       _order = order;
       if (error != null) _error = error.message;
     });
-    if (error != null && error.isFatal) _reportFatal(error);
+    if (error != null && error.isFatal) _reportOnce(error);
   }
 
-  void _reportFatal(PayriffError error) {
-    if (_fatalReported) return;
-    _fatalReported = true;
+  void _reportOnce(PayriffError error) {
+    if (_failureReported) return;
+    _failureReported = true;
     widget.onResult(PayriffResultFailed(error: error));
   }
 
@@ -237,6 +288,9 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     final bool orderEnded =
         error != null &&
         (error.isFatal || error.code == PayriffErrorCode.orderNotPayable);
+    // A hooking tool or a debugger that attached after the view appeared.
+    final bool deviceRefused =
+        error?.code == PayriffErrorCode.deviceCompromised;
     if (mounted) {
       setState(() {
         _paying = false;
@@ -244,9 +298,12 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
         // be paid: the order is not paid again from this view.
         if (result is! PayriffResultFailed) _finished = true;
         if (orderEnded) _error = error.message;
+        if (deviceRefused) _deviceRefused = true;
       });
     }
-    if (error != null && error.isFatal) _fatalReported = true;
+    if (error != null && (error.isFatal || deviceRefused)) {
+      _failureReported = true;
+    }
     widget.onResult(result);
   }
 
@@ -267,11 +324,15 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       fontWeight: FontWeight.w400,
     );
     final PayriffClientOrder? order = _order;
-    // CONTRACT §16.14: an error message, or `view.notPayable` for an order
-    // that loaded but cannot be paid by card.
-    final String? error =
-        _error ??
-        (order != null && !order.isPayableByCard ? strings.notPayable : null);
+    // CONTRACT §16.16 `view.deviceNotSupported` on a refused device; else
+    // §16.14: an error message, or `view.notPayable` for an order that
+    // loaded but cannot be paid by card.
+    final String? error = _deviceRefused
+        ? strings.deviceNotSupported
+        : _error ??
+              (order != null && !order.isPayableByCard
+                  ? strings.notPayable
+                  : null);
 
     final Widget content = Column(
       mainAxisSize: MainAxisSize.min,
@@ -287,7 +348,11 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
           listenable: _card,
           builder: (BuildContext context, _) => _PayButton(
             key: paymentViewPayButtonKey,
-            title: paymentViewPayTitle(strings, order),
+            title: paymentViewPayTitle(
+              strings,
+              order,
+              label: style.payButtonLabel,
+            ),
             enabled: _canPay,
             busy: _paying || _card.isProcessing,
             color: style.buttonColor ?? payriffBrandColor,
@@ -323,7 +388,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
           SizedBox(height: style.showBadges ? 20 : 24),
           _SecureLine(
             key: paymentViewSecureKey,
-            text: strings.secure,
+            text: _orLocalized(style.secureNoteText, strings.secure),
             style: secondary,
           ),
         ],
@@ -336,6 +401,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
               key: paymentViewPoweredByKey,
               strings: strings,
               style: secondary,
+              dark: dark,
             ),
           )
         : null;
@@ -576,12 +642,19 @@ class _SecureLine extends StatelessWidget {
   );
 }
 
-/// `view.poweredBy` with the Payriff logo where "Payriff" is, centred.
+/// `view.poweredBy` with the Payriff logo where "Payriff" is, centred. The
+/// logo has a light wordmark in dark mode.
 class _PoweredBy extends StatelessWidget {
-  const _PoweredBy({super.key, required this.strings, required this.style});
+  const _PoweredBy({
+    super.key,
+    required this.strings,
+    required this.style,
+    required this.dark,
+  });
 
   final PayriffCardStrings strings;
   final TextStyle style;
+  final bool dark;
 
   @override
   Widget build(BuildContext context) {
@@ -597,10 +670,10 @@ class _PoweredBy extends StatelessWidget {
                 style: style,
                 children: <InlineSpan>[
                   if (parts.before.isNotEmpty) TextSpan(text: parts.before),
-                  const WidgetSpan(
+                  WidgetSpan(
                     alignment: PlaceholderAlignment.middle,
                     child: _Asset(
-                      PaymentViewAssets.logo,
+                      PaymentViewAssets.footerLogo(dark: dark),
                       width: 82,
                       height: 16,
                       label: payriffWordmark,
@@ -613,4 +686,11 @@ class _PoweredBy extends StatelessWidget {
             ),
     );
   }
+}
+
+/// [custom] without surrounding white space, or [localized] when it is null or
+/// blank (CONTRACT §16.14).
+String _orLocalized(String? custom, String localized) {
+  final String? trimmed = custom?.trim();
+  return trimmed == null || trimmed.isEmpty ? localized : trimmed;
 }

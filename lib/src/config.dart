@@ -45,6 +45,7 @@ final class PayriffConfig {
     this.environment = PayriffEnvironment.production,
     this.language,
     this.enableLogging = false,
+    this.allowCompromisedDevices = false,
   });
 
   /// The publishable key (`pr_pk_live_…`) of your Payriff application, sent
@@ -67,6 +68,18 @@ final class PayriffConfig {
   /// builds, the console.
   final bool enableLogging;
 
+  /// Whether card payments may run on a compromised device (CONTRACT
+  /// §16.16): rooted or jailbroken, with a hooking framework such as Frida
+  /// loaded, or with a debugger attached to a release build. A device whose
+  /// check cannot complete counts as compromised too.
+  ///
+  /// `false` (the default) refuses them: `Payriff.confirmCardPayment` fails
+  /// with `PayriffErrorCode.deviceCompromised` and `PayriffPaymentView` says
+  /// that card payments are not available on this device. `true` only logs a
+  /// warning that names what was found. Set it only for development on a
+  /// rooted or jailbroken test device, never in an app you ship.
+  final bool allowCompromisedDevices;
+
   /// A description without secrets: the publishable key is shown as
   /// `***(<length>)`.
   @override
@@ -77,6 +90,7 @@ final class PayriffConfig {
         : '***(${publishable.length})';
     return 'PayriffConfig(environment: ${environment.name}, '
         'language: ${language?.value}, enableLogging: $enableLogging, '
+        'allowCompromisedDevices: $allowCompromisedDevices, '
         'publishableKey: $publishableText)';
   }
 }

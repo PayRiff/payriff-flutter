@@ -53,12 +53,22 @@ enum PayriffErrorCode {
   /// status was not final.
   unexpectedResponse('UNEXPECTED_RESPONSE'),
 
+  /// Card payments are refused on this device (CONTRACT §16.16): it is
+  /// rooted or jailbroken, a hooking framework such as Frida is loaded, a
+  /// debugger is attached to a release build, or the check could not
+  /// complete, and `PayriffConfig.allowCompromisedDevices` is off. Nothing
+  /// was sent. Not fatal: the order can still be paid on another device.
+  deviceCompromised('DEVICE_COMPROMISED'),
+
   /// Payriff answered with an error envelope (`code` other than `00000`).
   /// Part of the code set shared by all Payriff SDKs (CONTRACT §5.3); the
   /// card flow maps its answers as in CONTRACT §16.3 and does not produce it.
   apiError('API_ERROR'),
 
-  /// No HTTP response arrived: offline, DNS, TLS or timeout.
+  /// No HTTP response arrived: offline, DNS, TLS or timeout. When Payriff's
+  /// server certificate fails the SDK's pinning (CONTRACT §16.15), the error
+  /// is not retryable and says "Payriff's server certificate could not be
+  /// verified."; nothing was sent.
   networkError('NETWORK_ERROR'),
 
   /// Anything else.

@@ -493,9 +493,11 @@ final class CardPayment {
     required ThreeDsSheetOpener openSheet,
     SdkLogger? logger,
     void Function()? onSubmitted,
+    Future<PayriffError?> Function()? checkDevice,
   }) : _openSheet = openSheet,
        _logger = logger ?? SdkLogger.silent,
-       _onSubmitted = onSubmitted;
+       _onSubmitted = onSubmitted,
+       _checkDevice = checkDevice;
 
   /// The Client API session.
   final ClientApi api;
@@ -512,6 +514,10 @@ final class CardPayment {
   final ThreeDsSheetOpener _openSheet;
   final SdkLogger _logger;
   final void Function()? _onSubmitted;
+
+  /// CONTRACT §16.16: the device check right before the card is encrypted;
+  /// an error stops the payment there.
+  final Future<PayriffError?> Function()? _checkDevice;
 
   ThreeDsSession? _session;
   ThreeDsSheet? _sheet;
@@ -608,6 +614,11 @@ final class CardPayment {
         ),
       );
     }
+
+    // CONTRACT §16.16: the device again, right before the card is
+    // encrypted, because a hooking tool can attach while the order loads.
+    final PayriffError? refused = await _checkDevice?.call();
+    if (refused != null) return PayriffResultFailed(error: refused);
 
     // Step 3: encrypt natively and POST /pay.
     final Uint8List plaintext = buildCardJsonBytes(card);

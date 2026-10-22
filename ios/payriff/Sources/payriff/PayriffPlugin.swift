@@ -12,6 +12,8 @@ import WebKit
 /// - `openExternal` {url} -> bool, `UIApplication.open` after the §7.5 scheme checks.
 /// - `clearWebsiteData` {hosts, origins, urls} -> nil once WebKit is done: removes the default
 ///   data store's records (all types) of the sites a payment's 3-D Secure WebViews loaded (§9.1a).
+/// - `deviceIntegrity` -> {compromised: bool, signals: [String]}: jailbreak, hooking and debugger
+///   checks (§16.16, `PayriffDeviceIntegrity`), run off the main thread.
 ///
 /// Nothing here logs. Error messages are fixed strings without input data.
 public final class PayriffPlugin: NSObject, FlutterPlugin {
@@ -82,6 +84,8 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
         return
       }
       clearWebsiteData(hosts: hosts, result: result)
+    case "deviceIntegrity":
+      deviceIntegrity(result: result)
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -199,5 +203,24 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
     let name = site.lowercased()
     guard !name.isEmpty else { return false }
     return hosts.contains { $0 == name || $0.hasSuffix("." + name) }
+  }
+
+  // MARK: - Device integrity (§16.16)
+
+  /// One per process, so the jailbreak results are kept for the process.
+  static let integrity = PayriffDeviceIntegrity(probes: PayriffDeviceProbes())
+  private static let integrityQueue = DispatchQueue(
+    label: "com.payriff.flutter.integrity", qos: .userInitiated)
+
+  /// Runs the checks on their own queue (they read files and try a TCP connection to
+  /// frida-server) and replies `{compromised, signals}` on the main thread. Signal names only: no
+  /// paths or file contents.
+  private func deviceIntegrity(result: @escaping FlutterResult) {
+    Self.integrityQueue.async {
+      let signals = Self.integrity.signals()
+      DispatchQueue.main.async {
+        result(["compromised": !signals.isEmpty, "signals": signals])
+      }
+    }
   }
 }

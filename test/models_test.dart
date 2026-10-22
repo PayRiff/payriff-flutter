@@ -193,17 +193,22 @@ void main() {
         environment: PayriffEnvironment.sandbox,
         language: PayriffLanguage.az,
         enableLogging: true,
+        allowCompromisedDevices: true,
       );
       expect(
         config.toString(),
         'PayriffConfig(environment: sandbox, language: AZ, '
-        'enableLogging: true, publishableKey: ***(20))',
+        'enableLogging: true, allowCompromisedDevices: true, '
+        'publishableKey: ***(20))',
       );
       expect(config.toString(), isNot(contains('SECRETISH')));
       const PayriffConfig defaults = PayriffConfig();
       expect(defaults.environment, PayriffEnvironment.production);
       expect(defaults.language, isNull);
       expect(defaults.enableLogging, isFalse);
+      // CONTRACT §16.16: compromised devices are refused by default.
+      expect(defaults.allowCompromisedDevices, isFalse);
+      expect(defaults.toString(), contains('allowCompromisedDevices: false'));
       expect(defaults.toString(), contains('publishableKey: null'));
       expect(
         const PayriffConfig(publishableKey: '   ').toString(),
@@ -267,6 +272,7 @@ void main() {
           'INVALID_REQUEST',
           'PAYMENT_FAILED',
           'UNEXPECTED_RESPONSE',
+          'DEVICE_COMPROMISED',
           // The shared result shape (result_json.json).
           'API_ERROR',
           'NETWORK_ERROR',

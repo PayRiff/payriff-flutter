@@ -52,6 +52,14 @@ One screen:
 In a real app your server creates the order and fulfils it only after it has
 confirmed the payment with Payriff.
 
+The app keeps the SDK's defaults for security: its connections to Payriff
+are pinned, so a proxy such as Charles or Burp makes them fail, and on a
+rooted or jailbroken device, or with Frida attached, the payment view says
+that card payments aren't available on this device; the SDK log says which
+signal matched. To pay from such a test device anyway, add
+`allowCompromisedDevices: true` to `toConfig()` in `lib/src/settings.dart`
+for that run.
+
 The app's iOS deployment target is 16.0, the minimum the SDK supports.
 
 Sandbox test cards are listed on https://docs.payriff.com.

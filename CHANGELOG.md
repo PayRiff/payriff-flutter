@@ -11,14 +11,17 @@
   part of Payriff's hosted payment page (pay.payriff.com). It reads the
   order, shows the card form, a Pay button with the amount ("Pay 1.00 AZN"),
   the accepted card badges, the secure line and a "Powered by Payriff"
-  footer, pays with `confirmCardPayment` and passes each result to
-  `onResult`. Works as a page, in a bottom sheet and in a dialog.
+  footer (its logo has a light wordmark in dark mode), pays with
+  `confirmCardPayment` and passes each result to `onResult`. Works as a
+  page, in a bottom sheet and in a dialog.
 - `PayriffPaymentView` says "This order cannot be paid by card" in the
   view's language (Azerbaijani, English or Russian) when the order loaded but
   cannot be paid by card.
 - `PayriffPaymentViewStyle`: background, padding, the Pay button's colour,
   text, height and corners, the secondary text colour, `showBadges`,
   `showSecureNote`, `showPoweredBy` and the form's `formStyle`.
+  `payButtonLabel` replaces the word "Pay" (the amount and currency still
+  follow it) and `secureNoteText` the text of the secure line.
 - `PayriffCardForm` + `PayriffCardController`: card number, expiry, CVV and
   the holder name (shown by default, as on pay.payriff.com;
   `showHolder: false` hides it and sends `Unknown`), validated and formatted
@@ -50,14 +53,16 @@
 - 3-D Secure website data: when a payment that opened 3-D Secure pages ends,
   the SDK removes the website data of the sites they loaded, without
   delaying the result. iOS removes the default data store's records of those
-  sites; Android deletes their web storage and cookies and clears the
+  sites; Android deletes their web storage and cookies (for every path of the
+  pages, and `Secure`, `__Secure-` and `__Host-` cookies too) and clears the
   WebView cache.
 - Screen protection for the form and the sheet (Android `FLAG_SECURE`, an
   iOS cover while the app is inactive); copy and cut off for the number and
   the CVV, the CVV masked and never autofilled, values cleared after a final
   result and on dispose.
-- `PayriffConfig`: `publishableKey`, `environment`, `language` and
-  `enableLogging`. `Payriff.configure` never throws.
+- `PayriffConfig`: `publishableKey`, `environment`, `language`,
+  `enableLogging` and `allowCompromisedDevices`. `Payriff.configure` never
+  throws.
 - Typed `PayriffResult` (`PayriffResultSuccess`, `PayriffResultDeclined`,
   `PayriffResultCancelled`, `PayriffResultPending`, `PayriffResultFailed`)
   with `payment`, `error` and `isSuccess` helpers and the shared JSON shape;
@@ -68,3 +73,26 @@
   console.
 - HTTP: the SDK's own client ignores app-wide `http.runWithClient` clients,
   never follows redirects and refuses response bodies over 1 MB.
+- Certificate pinning: every Client API call (order, pay, 3-D Secure steps,
+  status) to `api.payriff.com` and `sb-api.payriff.com` trusts only
+  Payriff's certificate authorities (the current Sectigo roots and backup
+  roots of other major CAs), never the device's trust store. A failed check
+  is `networkError`, not retryable, "Payriff's server certificate could not
+  be verified."; nothing is sent. No setting turns it off; release builds
+  also ignore app-wide `HttpOverrides`. The 3-D Secure pages are not pinned.
+- Device integrity: card payments are refused on rooted or jailbroken
+  devices and when a hooking framework (Frida, Xposed or LSPosed, Substrate
+  and the like) or a debugger on a release build is found, checked when the
+  payment view appears, when `confirmCardPayment` starts and right before the
+  card is encrypted. `confirmCardPayment` returns `failed(DEVICE_COMPROMISED)`
+  (new error code `deviceCompromised`) and sends nothing; the payment view
+  says "Card payments aren't available on this device for security reasons",
+  does not read the order and reports the failure to `onResult` once.
+  `PayriffConfig.allowCompromisedDevices` (default `false`) only logs a
+  warning instead, for development on test devices. `Payriff.retrieveOrder`
+  is never blocked; `Payriff.isDeviceCompromised()` lets the app decide
+  early. A check that cannot complete (for example without the plugin's
+  native part) counts as a compromised device (`check failed`). On iOS, a
+  debugger and `DYLD_INSERT_LIBRARIES` count only in App Store and
+  TestFlight builds, so runs from Xcode are not blocked. The Android plugin
+  declares the root manager apps it looks for in `<queries>`.

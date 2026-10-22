@@ -17,6 +17,8 @@ import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 /**
  * Native half of the payriff plugin, channel `payriff/native` (CONTRACT §16.11):
@@ -27,6 +29,9 @@ import io.flutter.plugin.common.MethodChannel
  * - `openExternal` {url} -> bool, hardened hand-off to another app (§7.5, §16.0 item 5)
  * - `clearWebsiteData` {hosts, origins, urls} -> null when done: removes the website data of the
  *   sites a payment's 3-D Secure WebViews loaded (§9.1a)
+ * - `deviceIntegrity` -> {compromised: bool, signals: [String]}: root, hooking and debugger
+ *   checks (§16.16, [DeviceIntegrity]), run off the main thread; an error when they cannot
+ *   complete, which the Dart side counts as a compromised device
  *
  * Nothing here logs. Error messages are fixed strings without input data.
  */
@@ -107,6 +112,7 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 // WebView, CookieManager and WebStorage belong to the main thread.
                 Handler(Looper.getMainLooper()).post { clearWebsiteData(origins, urls, result) }
             }
+            "deviceIntegrity" -> deviceIntegrity(result)
             else -> result.notImplemented()
         }
     }
@@ -226,8 +232,12 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
         try {
             val cookies = CookieManager.getInstance()
             for (url in urls) {
-                val host = Uri.parse(url).host ?: continue
-                for (cookie in WebsiteData.expiredCookies(cookies.getCookie(url), host)) {
+                val uri = Uri.parse(url)
+                val host = uri.host ?: continue
+                val secure = uri.scheme.equals("https", ignoreCase = true)
+                val expired =
+                    WebsiteData.expiredCookies(cookies.getCookie(url), host, uri.encodedPath, secure)
+                for (cookie in expired) {
                     cookies.setCookie(url, cookie)
                 }
             }
@@ -256,9 +266,63 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
         }
     }
 
+    // Device integrity (§16.16) ---------------------------------------------------------------
+
+    /**
+     * Runs the checks on the plugin's own thread (they read files and try a TCP connection to
+     * frida-server) and replies `{compromised, signals}` on the main thread. Signal names only:
+     * no paths or file contents. When the checks cannot complete it replies an error, never a
+     * clean device: the Dart side fails closed (`check failed`).
+     */
+    private fun deviceIntegrity(result: MethodChannel.Result) {
+        val context = applicationContext
+        if (context == null) {
+            result.error(UNAVAILABLE, "The plugin is not attached.", null)
+            return
+        }
+        val integrity = integrityFor(context)
+        integrityThread.execute {
+            val signals =
+                try {
+                    integrity.signals()
+                } catch (e: Throwable) {
+                    // Every probe handles its own failures; this is a last resort, and it must
+                    // still reply.
+                    null
+                }
+            Handler(Looper.getMainLooper()).post {
+                if (signals == null) {
+                    result.error(INTEGRITY_FAILED, "The device checks failed.", null)
+                } else {
+                    result.success(
+                        mapOf("compromised" to signals.isNotEmpty(), "signals" to signals),
+                    )
+                }
+            }
+        }
+    }
+
     private companion object {
         const val CHANNEL = "payriff/native"
         const val ENCRYPTION_FAILED = "encryption_failed"
         const val WEBSITE_DATA_FAILED = "website_data_failed"
+        const val UNAVAILABLE = "unavailable"
+        const val INTEGRITY_FAILED = "integrity_failed"
+
+        /** One per process, so the root results are kept for the process (§16.16). */
+        private var integrity: DeviceIntegrity? = null
+
+        @Synchronized
+        fun integrityFor(context: Context): DeviceIntegrity =
+            integrity
+                ?: DeviceIntegrity(AndroidIntegrityProbes(context.applicationContext)).also {
+                    integrity = it
+                }
+
+        /** Runs the checks one at a time, off the main thread. */
+        val integrityThread: ExecutorService =
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "payriff-integrity").apply { isDaemon = true }
+            }
     }
 }

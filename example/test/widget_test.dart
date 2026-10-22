@@ -16,13 +16,20 @@ void main() {
     tester.view.physicalSize = const Size(1170, 2532);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
-    // The plugin's native half (app id, screen protection) is not there in
-    // widget tests.
+    // The plugin's native half (app id, screen protection, device checks)
+    // is not there in widget tests. Without a device check reply the SDK
+    // fails closed and refuses card payments, so this one is clean.
     const MethodChannel native = MethodChannel('payriff/native');
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       native,
-      (MethodCall call) async =>
-          call.method == 'appId' ? 'com.payriff.example.flutter' : null,
+      (MethodCall call) async => switch (call.method) {
+        'appId' => 'com.payriff.example.flutter',
+        'deviceIntegrity' => <String, Object?>{
+          'compromised': false,
+          'signals': <String>[],
+        },
+        _ => null,
+      },
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(

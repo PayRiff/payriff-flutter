@@ -72,6 +72,25 @@ class NativeCalls {
   /// When true, `clearWebsiteData` fails with a [PlatformException].
   bool clearWebsiteDataFails = false;
 
+  /// The reply of `deviceIntegrity` (CONTRACT §16.16): a clean device by
+  /// default. An [Exception] is thrown instead.
+  Object? integrityReply = clean;
+
+  /// Replies of `deviceIntegrity` used before [integrityReply], one per
+  /// call: for a tool that attaches during a payment.
+  final List<Object?> integrityReplies = <Object?>[];
+
+  /// A `deviceIntegrity` reply of a device without signals.
+  static const Map<String, Object?> clean = <String, Object?>{
+    'compromised': false,
+    'signals': <String>[],
+  };
+
+  /// A `deviceIntegrity` reply of a compromised device.
+  static Map<String, Object?> compromised([
+    List<String> signals = const <String>['su binary', 'Frida'],
+  ]) => <String, Object?>{'compromised': true, 'signals': signals};
+
   List<MethodCall> named(String method) =>
       calls.where((MethodCall c) => c.method == method).toList();
 
@@ -106,6 +125,12 @@ class NativeCalls {
                 throw PlatformException(code: 'website_data_failed');
               }
               return null;
+            case 'deviceIntegrity':
+              final Object? reply = integrityReplies.isNotEmpty
+                  ? integrityReplies.removeAt(0)
+                  : integrityReply;
+              if (reply is Exception) throw reply;
+              return reply;
           }
           return null;
         });
