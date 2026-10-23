@@ -44,6 +44,9 @@ const Set<String> _secretFields = <String>{
 /// Card-number fields: only the last four digits are logged.
 const Set<String> _panFields = <String>{'pan', 'cardnumber', 'card_number'};
 
+/// Headers whose values are URLs, absolute or relative.
+const Set<String> _urlHeaders = <String>{'content-location', 'location'};
+
 /// A body whose redacted JSON is longer than this is not logged in full.
 const int maxLoggedBodyChars = 16000;
 
@@ -78,8 +81,8 @@ String describeResponse(
   'body': redactBody(body),
 });
 
-/// [headers] sorted by name, with secret headers as `***(<length>)` and the
-/// publishable key reduced to its prefix.
+/// [headers] sorted by name, with secret headers as `***(<length>)`, the
+/// publishable key reduced to its prefix and URLs redacted by [redactUrl].
 Map<String, String> redactHeaders(Map<String, String> headers) {
   final List<String> names = headers.keys.toList()
     ..sort((String a, String b) => a.toLowerCase().compareTo(b.toLowerCase()));
@@ -97,12 +100,26 @@ String _headerValue(String lowerName, String value) {
         ? '$prefix***(${value.length})'
         : redactSecret(value);
   }
+  if (_urlHeaders.contains(lowerName) || isUrlValue(value)) {
+    return redactUrl(value);
+  }
   return value;
 }
 
-/// A JSON [body] with secrets redacted, card numbers masked and URL queries
-/// stripped. `null` when empty; a short description when it is not JSON or
-/// too long.
+// A string that is a URL: `http(s)`, or another scheme without white space
+// (so a message such as "Note: …" is not taken for one).
+final RegExp _urlValue = RegExp(
+  r'^(?:https?:|[A-Za-z][A-Za-z0-9+.\-]*:\S+$)',
+  caseSensitive: false,
+);
+
+/// Whether [value], without surrounding white space, is a URL of any
+/// scheme, which the logs show only through [redactUrl].
+bool isUrlValue(String value) => _urlValue.hasMatch(value.trim());
+
+/// A JSON [body] with secrets redacted, card numbers masked and URLs
+/// redacted by [redactUrl]. `null` when empty; a short description when it
+/// is not JSON or too long.
 Object? redactBody(String? body) {
   if (body == null || body.isEmpty) return null;
   final Object? json;
@@ -144,11 +161,10 @@ Object? _redact(Object? value, String? key) {
     return redactSecret('$value');
   }
   if (lower != null && _panFields.contains(lower)) return _maskPan('$value');
-  if (value is String && _httpUrl.hasMatch(value)) return redactUrl(value);
+  if (value is String && isUrlValue(value)) return redactUrl(value);
   return value;
 }
 
-final RegExp _httpUrl = RegExp(r'^https?://', caseSensitive: false);
 final RegExp _nonDigit = RegExp(r'\D');
 
 String _maskPan(String pan) {

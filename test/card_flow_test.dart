@@ -489,8 +489,24 @@ void main() {
         ]) {
           expect(entry.message, isNot(contains(secret)), reason: entry.message);
         }
+        // CONTRACT §11: bank pages reach the log by scheme and host only.
+        for (final String path in <String>['/challenge', '/next', '/form']) {
+          expect(entry.message, isNot(contains(path)), reason: entry.message);
+        }
       }
-      expect(logs, isNotEmpty);
+      final List<String> messages = logs
+          .map((PayriffLogEntry e) => e.message)
+          .toList();
+      expect(
+        messages,
+        containsAll(<String>[
+          '3-D Secure page: ThreeDsRequest(POST https://acs.bank.example)',
+          '3DS navigation https://acs.bank.example: allow',
+          'Blocked 3-D Secure page http://insecure.example',
+          // Payriff's own callback keeps its path.
+          '3DS navigation $_callback: allowCallback',
+        ]),
+      );
     });
 
     testWidgets('the first navigation after the callback ends the step', (

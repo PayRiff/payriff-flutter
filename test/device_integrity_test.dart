@@ -1,5 +1,6 @@
 // CONTRACT §16.16 on the Dart side: the reply of the plugin's
-// `deviceIntegrity`, the allowCompromisedDevices policy, failing closed when
+// `deviceIntegrity`, the allowCompromisedDevices policy (debug builds only;
+// debugPayriffDevelopmentBuild plays a release build), failing closed when
 // the checks cannot complete, the checks of confirmCardPayment (at its start
 // and right before the card is encrypted), Payriff.isDeviceCompromised and
 // retrieveOrder, with a fake Client API and a mocked `payriff/native`
@@ -67,6 +68,13 @@ void _expectRefused(PayriffResult result) {
   expect(error.toJson()['code'], 'DEVICE_COMPROMISED');
 }
 
+/// Runs the rest of the test as a profile or release build would, for the
+/// device policy: `allowCompromisedDevices` is ignored.
+void _releaseBuild() {
+  debugPayriffDevelopmentBuild = false;
+  addTearDown(() => debugPayriffDevelopmentBuild = null);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -78,6 +86,7 @@ void main() {
 
   tearDown(() {
     debugPayriffCardClock = null;
+    debugPayriffDevelopmentBuild = null;
     Payriff.debugReset();
   });
 
@@ -277,6 +286,122 @@ void main() {
             'PayriffConfig.allowCompromisedDevices',
       ]);
     });
+
+    test('the opt-out works in debug builds only; the test hook can only '
+        'turn it off', () {
+      // Tests run as a debug build.
+      expect(isDevelopmentBuild, isTrue);
+      debugPayriffDevelopmentBuild = false;
+      expect(isDevelopmentBuild, isFalse);
+      // In a debug build `true` changes nothing; outside debug builds the
+      // hook is ignored, so it can never turn the opt-out on there.
+      debugPayriffDevelopmentBuild = true;
+      expect(isDevelopmentBuild, isTrue);
+    });
+
+    test('outside debug builds allowCompromisedDevices is ignored: the '
+        'device is refused, and the warning says so', () async {
+      _releaseBuild();
+      NativeCalls()
+        ..integrityReply = NativeCalls.compromised(<String>['Magisk'])
+        ..install();
+      final List<String> warnings = await _warnings(() async {
+        expect(
+          await deviceIntegrityError(
+            allowCompromisedDevices: true,
+            logger: logger,
+            point: 'test',
+          ),
+          deviceCompromisedError,
+        );
+        expect(
+          await deviceIntegrityError(
+            allowCompromisedDevices: false,
+            logger: logger,
+            point: 'test',
+          ),
+          deviceCompromisedError,
+        );
+      });
+      expect(warnings, <String>[
+        'Compromised device (Magisk) at test: card payments are refused '
+            '(PayriffConfig.allowCompromisedDevices is ignored outside debug '
+            'builds)',
+        'Compromised device (Magisk) at test: card payments are refused',
+      ]);
+    });
+
+    test('outside debug builds a check that cannot complete is refused '
+        'whatever allowCompromisedDevices says', () async {
+      _releaseBuild();
+      final List<String> warnings = await _warnings(() async {
+        expect(
+          await deviceIntegrityError(
+            allowCompromisedDevices: true,
+            logger: logger,
+            point: 'test',
+          ),
+          deviceCompromisedError,
+        );
+      });
+      expect(warnings, <String>[
+        'Compromised device (check failed) at test: card payments are refused '
+            '(PayriffConfig.allowCompromisedDevices is ignored outside debug '
+            'builds)',
+      ]);
+    });
+
+    test('outside debug builds a clean device goes on, without a '
+        'warning', () async {
+      _releaseBuild();
+      NativeCalls().install();
+      final List<String> warnings = await _warnings(() async {
+        expect(
+          await deviceIntegrityError(
+            allowCompromisedDevices: true,
+            logger: logger,
+            point: 'test',
+          ),
+          isNull,
+        );
+      });
+      expect(warnings, isEmpty);
+    });
+  });
+
+  group('configure', () {
+    test('warns that allowCompromisedDevices is ignored outside debug '
+        'builds', () async {
+      final List<String> warnings = await _warnings(() async {
+        // Debug build: the flag works, nothing to warn about.
+        Payriff.configure(
+          const PayriffConfig(
+            publishableKey: testPublishableKey,
+            enableLogging: true,
+            allowCompromisedDevices: true,
+          ),
+        );
+        _releaseBuild();
+        Payriff.configure(
+          const PayriffConfig(
+            publishableKey: testPublishableKey,
+            enableLogging: true,
+            allowCompromisedDevices: true,
+          ),
+        );
+        // The flag off: nothing is ignored.
+        Payriff.configure(
+          const PayriffConfig(
+            publishableKey: testPublishableKey,
+            enableLogging: true,
+          ),
+        );
+      });
+      expect(warnings, <String>[
+        'PayriffConfig.allowCompromisedDevices is ignored outside debug '
+            'builds: card payments are refused on compromised devices.',
+      ]);
+    });
   });
 
   group('confirmCardPayment', () {
@@ -353,6 +478,61 @@ void main() {
         'Compromised device (Magisk) at card encryption: allowed by '
             'PayriffConfig.allowCompromisedDevices',
       ]);
+    });
+
+    testWidgets('outside debug builds allowCompromisedDevices does not let '
+        'a compromised device pay', (WidgetTester tester) async {
+      _releaseBuild();
+      final _Run run = await _start(
+        tester,
+        config: const PayriffConfig(
+          environment: PayriffEnvironment.sandbox,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+          allowCompromisedDevices: true,
+        ),
+      );
+      run.native.integrityReply = NativeCalls.compromised(<String>['Frida']);
+
+      final PayriffResult result = await run.confirm();
+
+      _expectRefused(result);
+      expect(run.backend.requests, isEmpty);
+      expect(run.native.named('encryptCard'), isEmpty);
+      expect(run.native.named('deviceIntegrity'), hasLength(1));
+      expect(run.warnings, <String>[
+        'Compromised device (Frida) at confirmCardPayment: card payments are '
+            'refused (PayriffConfig.allowCompromisedDevices is ignored outside '
+            'debug builds)',
+      ]);
+      expect(run.text(cardNumberFieldKey), isEmpty);
+    });
+
+    testWidgets('outside debug builds a tool that attaches while the order '
+        'loads is refused despite allowCompromisedDevices', (
+      WidgetTester tester,
+    ) async {
+      _releaseBuild();
+      final _Run run = await _start(
+        tester,
+        config: const PayriffConfig(
+          environment: PayriffEnvironment.sandbox,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+          allowCompromisedDevices: true,
+        ),
+      );
+      run.native.integrityReplies.addAll(<Object?>[
+        NativeCalls.clean,
+        NativeCalls.compromised(<String>['Frida']),
+      ]);
+
+      final PayriffResult result = await run.confirm();
+
+      _expectRefused(result);
+      expect(run.backend.to('/pay'), isEmpty);
+      expect(run.native.named('encryptCard'), isEmpty);
+      expect(run.native.named('deviceIntegrity'), hasLength(2));
     });
 
     testWidgets('checks that cannot complete refuse the payment', (

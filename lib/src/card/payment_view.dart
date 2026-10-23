@@ -103,7 +103,8 @@ String paymentViewPayTitle(
 /// complete; CONTRACT §16.16) the view does not read the order: it says
 /// that card payments are not available on this device, keeps Pay disabled
 /// and passes [PayriffErrorCode.deviceCompromised] to [onResult], once. With
-/// `PayriffConfig.allowCompromisedDevices` it only logs a warning.
+/// `PayriffConfig.allowCompromisedDevices` in a debug build it only logs a
+/// warning; profile and release builds ignore that flag.
 ///
 /// Give it the whole screen, for example as a `Scaffold` body: it scrolls
 /// when the keyboard is up and keeps the footer at the bottom when there is

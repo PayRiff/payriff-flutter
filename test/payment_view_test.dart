@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:payriff/payriff.dart';
 import 'package:payriff/src/card/payment_view.dart';
 import 'package:payriff/src/internal/card/card_strings.dart';
+import 'package:payriff/src/internal/card/device_integrity.dart';
 
 import 'support/card_support.dart';
 
@@ -461,6 +462,52 @@ void main() {
       expect(warnings, <String>[
         'Compromised device (Xposed) at payment view: allowed by '
             'PayriffConfig.allowCompromisedDevices',
+      ]);
+    });
+
+    testWidgets('outside debug builds allowCompromisedDevices is ignored: '
+        'the view refuses the device and does not read the order', (
+      WidgetTester tester,
+    ) async {
+      // What a profile or release build does.
+      debugPayriffDevelopmentBuild = false;
+      addTearDown(() => debugPayriffDevelopmentBuild = null);
+      final List<String> warnings = <String>[];
+      final StreamSubscription<PayriffLogEntry> logs = Payriff.logStream.listen(
+        (PayriffLogEntry entry) {
+          if (entry.level == PayriffLogLevel.warning) {
+            warnings.add(entry.message);
+          }
+        },
+      );
+      addTearDown(logs.cancel);
+      final FakeClientBackend backend = FakeClientBackend();
+      final List<PayriffResult> results = await _pumpView(
+        tester,
+        backend,
+        language: PayriffLanguage.en,
+        native: NativeCalls()
+          ..integrityReply = NativeCalls.compromised(<String>['Xposed']),
+        config: const PayriffConfig(
+          environment: PayriffEnvironment.sandbox,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+          allowCompromisedDevices: true,
+        ),
+      );
+      expect(
+        _errorLine(tester),
+        "Card payments aren't available on this device for security reasons",
+      );
+      expect(backend.requests, isEmpty);
+      expect(results, hasLength(1));
+      _expectDeviceRefused(results.single);
+      expect(warnings, <String>[
+        'PayriffConfig.allowCompromisedDevices is ignored outside debug '
+            'builds: card payments are refused on compromised devices.',
+        'Compromised device (Xposed) at payment view: card payments are '
+            'refused (PayriffConfig.allowCompromisedDevices is ignored '
+            'outside debug builds)',
       ]);
     });
 

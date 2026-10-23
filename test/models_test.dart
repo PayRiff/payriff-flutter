@@ -335,23 +335,163 @@ void main() {
   });
 
   group('URL helpers', () {
-    test('redactUrl: http(s) loses the query and fragment, other schemes '
-        'become <scheme>:… (CONTRACT §11)', () {
+    test('redactUrl: other hosts keep only scheme, host and port; other '
+        'schemes become <scheme>:… (CONTRACT §11)', () {
       expect(
         redactUrl('https://merchant.example/cb?token=abc#x'),
-        'https://merchant.example/cb',
+        'https://merchant.example',
       );
-      expect(redactUrl('https://a.example/p#frag'), 'https://a.example/p');
-      expect(redactUrl('HTTP://a.example/p?x=1'), 'HTTP://a.example/p');
+      expect(redactUrl('https://a.example/p#frag'), 'https://a.example');
+      expect(
+        redactUrl('https://acs.bank.example/challenge/T0K3N-in-the-path'),
+        'https://acs.bank.example',
+      );
+      expect(redactUrl('http://insecure.example/'), 'http://insecure.example');
+      expect(redactUrl('https://bank.example'), 'https://bank.example');
+      // Payriff's other hosts are not API hosts.
+      expect(
+        redactUrl('https://pay.payriff.com/r/o1?type=direct'),
+        'https://pay.payriff.com',
+      );
+      expect(
+        redactUrl('https://api.payriff.com.evil.example/api/v3/x'),
+        'https://api.payriff.com.evil.example',
+      );
       expect(redactUrl('tel:+994121234567'), 'tel:…');
       expect(redactUrl('mailto:support@payriff.com'), 'mailto:…');
       expect(redactUrl('data:text/html;base64,PGh0bWw+'), 'data:…');
       expect(redactUrl('javascript:alert(document.cookie)'), 'javascript:…');
       expect(redactUrl('intent://pay#Intent;scheme=x;end'), 'intent:…');
       expect(redactUrl('birbank://payment?id=1'), 'birbank:…');
-      expect(redactUrl('/relative?x=1'), '/relative');
+      expect(redactUrl('about:blank'), 'about:…');
       expect(redactSecret('abcd'), '***(4)');
       expect(redactSecret(null), 'none');
+    });
+
+    test('redactUrl: Payriff API hosts keep the path, with segments of 16 '
+        'or more characters shortened to their first and last 4', () {
+      expect(
+        redactUrl(
+          'https://api.payriff.com/api/v3/client/orders/'
+          '7c9e6679-7425-40de-944b-e07fc1f90ae7/pay?x=1#f',
+        ),
+        'https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/pay',
+      );
+      expect(
+        redactUrl('https://sb-api.payriff.com/api/v3/client/orders/o1/status'),
+        'https://sb-api.payriff.com/api/v3/client/orders/o1/status',
+      );
+      // 15 characters stay, 16 are shortened.
+      expect(
+        redactUrl('https://api.payriff.com/a/123456789012345'),
+        'https://api.payriff.com/a/123456789012345',
+      );
+      expect(
+        redactUrl('https://api.payriff.com/a/1234567890123456'),
+        'https://api.payriff.com/a/1234…3456',
+      );
+      expect(
+        redactUrl('https://api.payriff.com/api/v3/gateway/kapital/callback/1'),
+        'https://api.payriff.com/api/v3/gateway/kapital/callback/1',
+      );
+      expect(redactUrl('https://api.payriff.com'), 'https://api.payriff.com');
+      expect(redactUrl('https://api.payriff.com/'), 'https://api.payriff.com/');
+      expect(
+        redactUrl('https://api.payriff.com?token=abc'),
+        'https://api.payriff.com',
+      );
+      // Code points, not UTF-16 units: no character is cut in half.
+      expect(
+        redactUrl('https://api.payriff.com/😀😀abcdefghijklmn😀😀'),
+        'https://api.payriff.com/😀😀ab…mn😀😀',
+      );
+    });
+
+    test('redactUrl drops the user info, also on Payriff hosts', () {
+      expect(
+        redactUrl('https://user:pa55word@bank.example/acs?x=1'),
+        'https://bank.example',
+      );
+      expect(
+        redactUrl('https://user:pa55@word@api.payriff.com/api/v3/x'),
+        'https://api.payriff.com/api/v3/x',
+      );
+      expect(
+        redactUrl('https://token@bank.example:8443/p'),
+        'https://bank.example:8443',
+      );
+      // The user info ends with the authority: an `@` in the path or query
+      // is not one.
+      expect(
+        redactUrl('https://bank.example/a@b?c=@d'),
+        'https://bank.example',
+      );
+      expect(
+        redactUrl('https://api.payriff.com/x/@y?u=a@b'),
+        'https://api.payriff.com/x/@y',
+      );
+      // An authority that is no host and port (a password with a `/`) is
+      // not logged at all.
+      expect(redactUrl('https://user:pa/ss@bank.example/x'), 'https://…');
+    });
+
+    test('redactUrl keeps the port and handles IP literals', () {
+      expect(
+        redactUrl('https://fp.bank-cdn.example:8443/frame?t=1'),
+        'https://fp.bank-cdn.example:8443',
+      );
+      expect(
+        redactUrl('https://api.payriff.com:443/api/v3/client/orders/o1'),
+        'https://api.payriff.com:443/api/v3/client/orders/o1',
+      );
+      expect(
+        redactUrl('http://[::1]:8080/secret/path?x=1'),
+        'http://[::1]:8080',
+      );
+      expect(redactUrl('http://10.0.2.2:3000/a/b'), 'http://10.0.2.2:3000');
+    });
+
+    test('redactUrl reads upper-case schemes and hosts, and logs them in '
+        'lower case', () {
+      expect(redactUrl('HTTP://A.Example/p?x=1'), 'http://a.example');
+      expect(
+        redactUrl('HTTPS://API.PAYRIFF.COM/api/v3/client/orders/o1/pay'),
+        'https://api.payriff.com/api/v3/client/orders/o1/pay',
+      );
+      expect(
+        redactUrl('https://Sb-Api.Payriff.Com/api/v3/client/orders/o1'),
+        'https://sb-api.payriff.com/api/v3/client/orders/o1',
+      );
+      expect(redactUrl('TEL:+994121234567'), 'TEL:…');
+    });
+
+    test('redactUrl reads a URL as a browser does: backslashes, extra '
+        'slashes and white space around it', () {
+      // `\` is a `/` in http(s) URLs, so the host here is evil.example.
+      expect(
+        redactUrl(r'https://evil.example\@api.payriff.com/api/v3/x'),
+        'https://evil.example',
+      );
+      expect(
+        redactUrl(r'https:\\bank.example\acs?x=1'),
+        'https://bank.example',
+      );
+      expect(redactUrl('https:///bank.example/acs'), 'https://bank.example');
+      expect(
+        redactUrl('  https://bank.example/acs?x=1\n'),
+        'https://bank.example',
+      );
+    });
+
+    test('redactUrl: relative references have no known host', () {
+      expect(redactUrl('/relative?x=1'), '…');
+      expect(redactUrl('acs/challenge'), '…');
+      expect(redactUrl(''), '…');
+      expect(redactUrl('//bank.example/acs?x=1'), '//bank.example');
+      expect(
+        redactUrl('//api.payriff.com/api/v3/client/orders/o1'),
+        '//api.payriff.com/api/v3/client/orders/o1',
+      );
     });
 
     test('redactError redacts URLs quoted in error text', () {
@@ -370,7 +510,16 @@ void main() {
           'GET https://backend.example/status?sig=abc#f failed, '
           'uri=intent://pay?id=1#Intent;scheme=x;end',
         ),
-        'GET https://backend.example/status failed, uri=intent:…',
+        'GET https://backend.example failed, uri=intent:…',
+      );
+      expect(
+        redactUrlsInText(
+          'Could not load https://user:pw@acs.bank.example/T0K3N/challenge '
+          'from https://api.payriff.com/api/v3/client/orders/'
+          '7c9e6679-7425-40de-944b-e07fc1f90ae7/three-ds',
+        ),
+        'Could not load https://acs.bank.example from '
+        'https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/three-ds',
       );
       expect(
         redactUrlsInText('Cannot open dat=tel:+994121234567 or mailto:a@b.c'),

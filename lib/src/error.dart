@@ -56,8 +56,9 @@ enum PayriffErrorCode {
   /// Card payments are refused on this device (CONTRACT §16.16): it is
   /// rooted or jailbroken, a hooking framework such as Frida is loaded, a
   /// debugger is attached to a release build, or the check could not
-  /// complete, and `PayriffConfig.allowCompromisedDevices` is off. Nothing
-  /// was sent. Not fatal: the order can still be paid on another device.
+  /// complete, and `PayriffConfig.allowCompromisedDevices` is off (or
+  /// ignored: it works only in debug builds). Nothing was sent. Not fatal:
+  /// the order can still be paid on another device.
   deviceCompromised('DEVICE_COMPROMISED'),
 
   /// Payriff answered with an error envelope (`code` other than `00000`).

@@ -58,7 +58,9 @@ rooted or jailbroken device, or with Frida attached, the payment view says
 that card payments aren't available on this device; the SDK log says which
 signal matched. To pay from such a test device anyway, add
 `allowCompromisedDevices: true` to `toConfig()` in `lib/src/settings.dart`
-for that run.
+for that run. The SDK honours it only in debug builds (`flutter run` without
+`--profile` or `--release`); other builds ignore it and still refuse the
+device.
 
 The app's iOS deployment target is 16.0, the minimum the SDK supports.
 

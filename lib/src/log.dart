@@ -19,8 +19,12 @@ enum PayriffLogLevel {
 /// `PayriffConfig.enableLogging` is on.
 ///
 /// Log lines never contain card data, the order's client secret or the
-/// publishable key. URLs are redacted: `http(s)` URLs lose their query
-/// string and fragment, and any other scheme is logged as `<scheme>:…`.
+/// publishable key. URLs are redacted, in the HTTP details and logged bodies
+/// too: `http(s)` URLs lose their user info, query string and fragment, and
+/// only Payriff's API hosts keep the path, with segments of 16 or more
+/// characters shortened (`/api/v3/client/orders/7c9e…0ae7/pay`); other
+/// hosts, such as a bank's 3-D Secure pages, are logged as
+/// `scheme://host[:port]`. Any other scheme is logged as `<scheme>:…`.
 @immutable
 final class PayriffLogEntry {
   /// Creates a log entry.

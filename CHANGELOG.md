@@ -71,6 +71,12 @@
   secrets never reach the logs. Debug builds also log every API request and
   response as redacted, pretty-printed JSON. Only debug builds print to the
   console.
+- One URL redaction for every log line, the HTTP details and URLs inside
+  logged bodies: `http(s)` URLs lose their user info, query string and
+  fragment; only Payriff's API hosts keep the path, with segments of 16 or
+  more characters shortened (`/api/v3/client/orders/7c9e…0ae7/pay`); any
+  other host, such as a bank's 3-D Secure page, is logged as
+  `scheme://host[:port]`; any other scheme as `<scheme>:…`.
 - HTTP: the SDK's own client ignores app-wide `http.runWithClient` clients,
   never follows redirects and refuses response bodies over 1 MB.
 - Certificate pinning: every Client API call (order, pay, 3-D Secure steps,
@@ -89,10 +95,13 @@
   says "Card payments aren't available on this device for security reasons",
   does not read the order and reports the failure to `onResult` once.
   `PayriffConfig.allowCompromisedDevices` (default `false`) only logs a
-  warning instead, for development on test devices. `Payriff.retrieveOrder`
-  is never blocked; `Payriff.isDeviceCompromised()` lets the app decide
-  early. A check that cannot complete (for example without the plugin's
-  native part) counts as a compromised device (`check failed`). On iOS, a
-  debugger and `DYLD_INSERT_LIBRARIES` count only in App Store and
-  TestFlight builds, so runs from Xcode are not blocked. The Android plugin
-  declares the root manager apps it looks for in `<queries>`.
+  warning instead, for development on test devices. It works only in debug
+  builds (`kDebugMode`): profile and release builds ignore it with a warning
+  and refuse compromised devices, so a flag left on never reaches
+  production. `Payriff.retrieveOrder` is never blocked;
+  `Payriff.isDeviceCompromised()` lets the app decide early. A check that
+  cannot complete (for example without the plugin's native part) counts as a
+  compromised device (`check failed`). On iOS, a debugger and
+  `DYLD_INSERT_LIBRARIES` count only in App Store and TestFlight builds, so
+  runs from Xcode are not blocked. The Android plugin declares the root
+  manager apps it looks for in `<queries>`.

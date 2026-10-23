@@ -73,7 +73,8 @@ abstract final class Payriff {
   ///
   /// Never throws. A publishable key that is not a `pr_pk_live_…` key is
   /// logged as a warning (`Invalid configuration: …`) and makes the card
-  /// calls fail with [PayriffErrorCode.invalidConfig].
+  /// calls fail with [PayriffErrorCode.invalidConfig]. Outside debug builds
+  /// `PayriffConfig.allowCompromisedDevices` is ignored, with a warning.
   static void configure(PayriffConfig config) {
     _config = config;
     final SdkLogger logger = _loggerFor(config);
@@ -87,6 +88,13 @@ abstract final class Payriff {
         'Invalid configuration: publishableKey is not a publishable key '
         '(pr_pk_live_…); confirmCardPayment and retrieveOrder fail with '
         'INVALID_CONFIG.',
+      );
+    }
+    // CONTRACT §16.16: the opt-out works only in development builds.
+    if (config.allowCompromisedDevices && !isDevelopmentBuild) {
+      logger.warning(
+        '$allowCompromisedDevicesIgnored: card payments are refused on '
+        'compromised devices.',
       );
     }
   }
@@ -106,8 +114,9 @@ abstract final class Payriff {
   ///    device, with a hooking framework or a debugger on a release build,
   ///    or when the check cannot complete, the result is
   ///    [PayriffErrorCode.deviceCompromised] and nothing is sent, unless
-  ///    `PayriffConfig.allowCompromisedDevices` is set. The check runs again
-  ///    right before the card is encrypted.
+  ///    `PayriffConfig.allowCompromisedDevices` is set in a debug build
+  ///    (profile and release builds ignore it). The check runs again right
+  ///    before the card is encrypted.
   /// 3. The order must be `CREATED` or `PENDING` and accept `CARD`, else
   ///    [PayriffErrorCode.orderNotPayable].
   /// 4. The card is encrypted on the device and sent; the form is locked
@@ -315,7 +324,8 @@ abstract final class Payriff {
   /// Whether this device is compromised (CONTRACT §16.16): rooted or
   /// jailbroken, with a hooking framework such as Frida loaded, or with a
   /// debugger attached to a release build. Card payments are refused on such
-  /// a device unless `PayriffConfig.allowCompromisedDevices` is set.
+  /// a device unless `PayriffConfig.allowCompromisedDevices` is set in a
+  /// debug build.
   ///
   /// Ask it early, for example to offer another payment method. It reports
   /// the device whatever `allowCompromisedDevices` says and needs no

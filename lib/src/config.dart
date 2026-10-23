@@ -76,8 +76,13 @@ final class PayriffConfig {
   /// `false` (the default) refuses them: `Payriff.confirmCardPayment` fails
   /// with `PayriffErrorCode.deviceCompromised` and `PayriffPaymentView` says
   /// that card payments are not available on this device. `true` only logs a
-  /// warning that names what was found. Set it only for development on a
-  /// rooted or jailbroken test device, never in an app you ship.
+  /// warning that names what was found, for development on a rooted or
+  /// jailbroken test device.
+  ///
+  /// `true` works only in debug builds (`kDebugMode`). Profile and release
+  /// builds ignore it: compromised devices are refused as with `false`, and
+  /// the log says that the flag is ignored outside debug builds. So a flag
+  /// left on never reaches the app you ship.
   final bool allowCompromisedDevices;
 
   /// A description without secrets: the publishable key is shown as

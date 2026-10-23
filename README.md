@@ -438,7 +438,7 @@ configuration applies to later calls.
 | `environment` | `production` | `production` uses `https://api.payriff.com`, `sandbox` uses `https://sb-api.payriff.com`. The sandbox host is provisional until Payriff confirms it. |
 | `language` | `null` | `PayriffLanguage.az`, `en` or `ru` for the form and the 3-D Secure sheet. `null` uses the device language (Azerbaijani, Russian, otherwise English). |
 | `enableLogging` | `false` | See [Logging](#logging). |
-| `allowCompromisedDevices` | `false` | `true` lets card payments run on a rooted or jailbroken device, with a hooking tool or with a debugger on a release build, and only logs a warning that names what was found. For development on test devices only, never in an app you ship. See [Security](#security). |
+| `allowCompromisedDevices` | `false` | In debug builds (`kDebugMode`), `true` lets card payments run on a rooted or jailbroken device or with a hooking tool, and only logs a warning that names what was found. Profile and release builds ignore it with a warning and refuse such devices, so a flag left on never reaches the app you ship. For development on test devices. See [Security](#security). |
 
 ## Handling `PayriffResult`
 
@@ -490,7 +490,7 @@ be paid from the app; create a new order) and, for `validationFailed`,
 | `rateLimited` | HTTP 429 after the SDK's retries. Fatal. |
 | `paymentFailed` | Any other unsuccessful answer, with Payriff's message. The customer may try again. |
 | `unexpectedResponse` | Payriff's next step could not be understood and the status was not final. |
-| `deviceCompromised` | The device is rooted or jailbroken, a hooking tool or a debugger on a release build was found, or the check could not complete, and `allowCompromisedDevices` is off. Nothing was sent. Not fatal: the order can be paid on another device. |
+| `deviceCompromised` | The device is rooted or jailbroken, a hooking tool or a debugger on a release build was found, or the check could not complete, and `allowCompromisedDevices` is off (it works only in debug builds). Nothing was sent. Not fatal: the order can be paid on another device. |
 | `networkError` | Offline, DNS, TLS or timeout. When Payriff's server certificate fails the SDK's pinning, `isRetryable` is `false` and the message is "Payriff's server certificate could not be verified."; nothing was sent. |
 | `unknown` | Anything else, for example a device that cannot encrypt. |
 | `apiError` | Part of the code set shared by all Payriff SDKs; the card flow does not produce it. |
@@ -507,8 +507,21 @@ Payriff.logStream.listen((entry) => myLogger.log(entry.formatted));
 
 `PayriffLogEntry` has `level`, `message`, `timestamp` and `formatted` (the
 `[Payriff] [LEVEL] message` line). Logs never contain card data, and keys
-and secrets show only as `***(<length>)`. `http(s)` URLs are logged without
-their query string and fragment; any other URL is logged as `<scheme>:…`.
+and secrets show only as `***(<length>)`.
+
+Every URL in the logs, including the HTTP details below and URLs inside
+logged bodies, is redacted by one rule:
+
+- `http(s)` URLs lose their user info (`user:password@`), query string and
+  fragment.
+- Only Payriff's API hosts (`api.payriff.com`, `sb-api.payriff.com`) keep
+  the path, and every path segment of 16 or more characters is shortened to
+  its first and last 4 characters:
+  `https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/pay`.
+- Any other host, such as a bank's 3-D Secure page, is logged as
+  `scheme://host[:port]` only.
+- Any other scheme is logged as `<scheme>:…`, so a `tel:` number or a
+  `mailto:` address never reaches the logs.
 
 In **debug builds**, each API request and response is also logged at `debug`
 level as pretty-printed JSON (method, URL, headers, body). `X-Client-Secret`
@@ -556,10 +569,13 @@ unless you collect the entries yourself.
   the device, so a determined attacker can get past them; they stop the
   common tools.
 - **Opting out for development.** On a rooted or jailbroken test device,
-  pass `allowCompromisedDevices: true` to `PayriffConfig`, for example
-  `allowCompromisedDevices: kDebugMode` so that it never reaches a release
-  build. The SDK then only logs a warning that names what it found (such as
-  `su binary`, `Magisk` or `Frida`).
+  pass `allowCompromisedDevices: true` to `PayriffConfig`. It works only in
+  debug builds (`kDebugMode`, as with `flutter run`): the SDK then only logs
+  a warning that names what it found (such as `su binary`, `Magisk` or
+  `Frida`). Profile and release builds ignore the flag: they refuse a
+  compromised device as if it were `false`, and the log says that
+  `allowCompromisedDevices` is ignored outside debug builds. So a flag left
+  on can never reach the app you ship.
 
 ## Platform setup
 
@@ -643,7 +659,8 @@ See [example/README.md](example/README.md).
 | `orderNotPayable` | The order was already paid, expired, or does not accept cards. |
 | Blank 3-D Secure page or `networkError` in Android release builds | Add the `INTERNET` permission to the main manifest. |
 | `networkError`: "Payriff's server certificate could not be verified." | A proxy (Charles, Burp, mitmproxy) or a network that intercepts TLS sits between the app and Payriff. The SDK's connections are pinned: turn the proxy off and use the debug logs to see the traffic. |
-| `deviceCompromised` on a test device | The device is rooted or jailbroken (Android emulator images with `su` count too), a hooking tool such as Frida runs, a debugger is attached to a release build, or the check could not complete (`check failed`, for example in widget tests, which have no native plugin). Turn on `enableLogging` to see which signal matched. For development and tests, set `allowCompromisedDevices` in debug builds only. |
+| `deviceCompromised` on a test device | The device is rooted or jailbroken (Android emulator images with `su` count too), a hooking tool such as Frida runs, a debugger is attached to a release build, or the check could not complete (`check failed`, for example in widget tests, which have no native plugin). Turn on `enableLogging` to see which signal matched. For development and tests, set `allowCompromisedDevices: true` and run a debug build. |
+| `deviceCompromised` although `allowCompromisedDevices` is `true` | The app is a profile or release build (for example `flutter run --release`, or an app from TestFlight or a store). The flag works only in debug builds; the log says "PayriffConfig.allowCompromisedDevices is ignored outside debug builds". Run a debug build on the test device. |
 | `presentationFailed` | The `BuildContext` has no `Navigator` above it (for example a context above `MaterialApp`). |
 | Payment lost after the app was killed | The app process ended mid-payment. Reconcile the order on your server. |
 

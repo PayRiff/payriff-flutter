@@ -218,12 +218,21 @@ final class ClientApi {
     bool retryNoResponseOnce = false,
   }) async {
     final Uri url = Uri.parse('$baseUrl$path');
+    // CONTRACT §11: logged like any URL, so a long order id is shortened.
+    final String target = '$method ${redactUrl(url.toString())}';
     int rateLimitRetries = 0;
     bool retriedNoResponse = false;
     while (true) {
       final (int, String) response;
       try {
-        response = await _send(method, url, body, extraHeaders, timeout);
+        response = await _send(
+          method,
+          url,
+          target,
+          body,
+          extraHeaders,
+          timeout,
+        );
       } on PayriffException catch (e) {
         // A pinning failure is not retried: nothing was sent, and the
         // same server would be refused again.
@@ -232,7 +241,7 @@ final class ClientApi {
             e.error.code == PayriffErrorCode.networkError &&
             e.error.isRetryable) {
           retriedNoResponse = true;
-          _logger.info('$method ${url.path}: no response, retrying once');
+          _logger.info('$target: no response, retrying once');
           await _clock.sleep(payNetworkRetryDelay);
           continue;
         }
@@ -242,7 +251,7 @@ final class ClientApi {
       if (status == 429 && rateLimitRetries < rateLimitBackoff.length) {
         final Duration wait = rateLimitBackoff[rateLimitRetries++];
         _logger.info(
-          '$method ${url.path}: HTTP 429, retry $rateLimitRetries in '
+          '$target: HTTP 429, retry $rateLimitRetries in '
           '${wait.inSeconds} s',
         );
         await _clock.sleep(wait);
@@ -255,6 +264,7 @@ final class ClientApi {
   Future<(int, String)> _send(
     String method,
     Uri url,
+    String target,
     Uint8List? body,
     Map<String, String> extraHeaders,
     Duration timeout,
@@ -270,7 +280,7 @@ final class ClientApi {
     final String? appId = _appId;
     if (appId != null) request.headers['X-Client-App-Id'] = appId;
     if (body != null) request.bodyBytes = body;
-    _logger.debug('$method ${url.path}');
+    _logger.debug(target);
     if (httpDetailsLogged) {
       _logger.debug(
         'HTTP request\n'
@@ -285,7 +295,7 @@ final class ClientApi {
         streamed,
       ).timeout(timeout);
       final String text = utf8.decode(bytes, allowMalformed: true);
-      _logger.debug('$method ${url.path} -> HTTP $status');
+      _logger.debug('$target -> HTTP $status');
       if (httpDetailsLogged) {
         _logger.debug(
           'HTTP response\n'
@@ -294,10 +304,10 @@ final class ClientApi {
       }
       return (status, text);
     } on _TooLarge catch (e) {
-      _logger.warning('$method ${url.path}: the response is too large');
+      _logger.warning('$target: the response is too large');
       return (e.status, '');
     } on TimeoutException {
-      _logger.warning('$method ${url.path} timed out');
+      _logger.warning('$target timed out');
       throw PayriffException(
         PayriffError(
           code: PayriffErrorCode.networkError,
@@ -309,13 +319,11 @@ final class ClientApi {
       // CONTRACT §16.15: the server's certificate failed the pinned
       // validation (a HandshakeException or CertificateException), so the
       // TLS handshake ended before the request was sent.
-      _logger.warning(
-        '$method ${url.path}: the server certificate could not be verified',
-      );
+      _logger.warning('$target: the server certificate could not be verified');
       throw const PayriffException(pinningFailure);
     } on Object {
       // The exception text is not kept: an HTTP client may quote headers.
-      _logger.warning('$method ${url.path} failed: no response');
+      _logger.warning('$target failed: no response');
       throw const PayriffException(
         PayriffError(
           code: PayriffErrorCode.networkError,
