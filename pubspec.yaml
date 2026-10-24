@@ -3,7 +3,7 @@ description: >-
   Payriff card payments for Flutter: a native card form that pays
   server-created orders with the publishable key, 3-D Secure in a native sheet
   and a verified, typed payment result.
-version: 1.0.0
+version: 1.0.0-rc.1
 homepage: https://payriff.com
 documentation: https://docs.payriff.com
 repository: https://github.com/PayRiff/payriff-flutter

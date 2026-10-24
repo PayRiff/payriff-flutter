@@ -1,0 +1,46 @@
+name: Release
+
+# A version tag (for example 1.0.0-rc.1) publishes that version to pub.dev through
+# pub.dev's automated publishing (no stored credentials), then creates the GitHub release.
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pub.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag must match pubspec.yaml
+        id: version
+        run: |
+          version=$(sed -n 's/^version: *//p' pubspec.yaml)
+          test "$version" = "$GITHUB_REF_NAME" || { echo "::error::Tag $GITHUB_REF_NAME does not match pubspec.yaml version $version"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pub.dev/api/packages/payriff/versions/$version")
+          echo "published=$([ "$code" = 200 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: dart-lang/setup-dart@v1
+        if: steps.version.outputs.published == 'false'
+      - uses: subosito/flutter-action@v2
+        if: steps.version.outputs.published == 'false'
+        with:
+          channel: stable
+      - name: Test and publish to pub.dev
+        if: steps.version.outputs.published == 'false'
+        run: |
+          flutter pub get
+          flutter test
+          flutter pub publish --force
+      - name: Release notes from the CHANGELOG
+        run: awk '/^## /{n++} n==1' CHANGELOG.md | tail -n +2 > "$RUNNER_TEMP/notes.md"
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" $flags

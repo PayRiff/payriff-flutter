@@ -50,7 +50,7 @@ import 'result.dart';
 /// ```
 abstract final class Payriff {
   /// The version of this package.
-  static const String version = '1.0.0';
+  static const String version = '1.0.0-rc.1';
 
   static PayriffConfig? _config;
   static bool _cardPaymentActive = false;

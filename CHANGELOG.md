@@ -1,6 +1,9 @@
 # Changelog
 
-## [1.0.0] - Unreleased
+## 1.0.0-rc.1 - 2026-10-24
+
+Release candidate of 1.0.0 for the security review. The API can still change
+before 1.0.0.
 
 - First release.
 - Card-only SDK (CONTRACT revision 5): the merchant's server creates the
