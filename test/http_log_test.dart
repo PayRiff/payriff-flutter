@@ -202,7 +202,7 @@ void main() {
     );
     addTearDown(() => debugPayriffClientApiHttpClient = null);
     final ClientApi api = ClientApi(
-      baseUrl: clientApiBaseUrl(PayriffEnvironment.production),
+      baseUrl: const PayriffConfig().apiBaseUrl,
       publishableKey: 'pr_pk_live_TEST',
       clientSecret: 'pr_cs_TEST',
       appId: null,

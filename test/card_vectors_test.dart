@@ -2,6 +2,7 @@
 // card_validation, card_format, card_strings, card_crypto (the plaintext and
 // the key pin; the AES/RSA cases run in the native plugin tests),
 // card_next_action, card_3ds_navigation and card_api.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -584,16 +585,78 @@ void main() {
       }
     });
 
-    test('API hosts per environment (the sandbox host is provisional)', () {
-      expect(
-        clientApiBaseUrl(PayriffEnvironment.production),
-        'https://api.payriff.com',
-      );
-      expect(
-        clientApiBaseUrl(PayriffEnvironment.sandbox),
-        'https://sb-api.payriff.com',
-      );
+    final Map<String, Object?> hosts = v['hosts']! as Map<String, Object?>;
+
+    test('hosts: the default region', () {
+      expect(const PayriffConfig().region.name, hosts['defaultRegion']);
     });
+
+    for (final Map<String, Object?> c in _list(hosts['cases'])) {
+      test('hosts: ${c['region']} ${c['environment']} -> ${c['apiBaseUrl']}, '
+          'one warning per configure: ${c['warning'] != null}', () async {
+        addTearDown(Payriff.debugReset);
+        final PayriffConfig config = PayriffConfig(
+          publishableKey: testPublishableKey,
+          environment: PayriffEnvironment.values.byName(
+            c['environment']! as String,
+          ),
+          region: PayriffRegion.values.byName(c['region']! as String),
+          enableLogging: true,
+        );
+        expect(config.apiBaseUrl, c['apiBaseUrl']);
+
+        final List<PayriffLogEntry> entries = <PayriffLogEntry>[];
+        final StreamSubscription<PayriffLogEntry> subscription = Payriff
+            .logStream
+            .listen(entries.add);
+        addTearDown(subscription.cancel);
+        List<String> warnings() => entries
+            .where((PayriffLogEntry e) => e.level == PayriffLogLevel.warning)
+            .map((PayriffLogEntry e) => e.message)
+            .toList();
+        final String? warning = c['warning'] as String?;
+        Payriff.configure(config);
+        Payriff.configure(config);
+        await Future<void>.delayed(Duration.zero);
+        expect(warnings(), <String>[
+          if (warning != null) ...<String>[warning, warning],
+        ]);
+        // Like every entry, the warning needs enableLogging.
+        entries.clear();
+        Payriff.configure(
+          PayriffConfig(
+            publishableKey: testPublishableKey,
+            environment: config.environment,
+            region: config.region,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(entries, isEmpty);
+
+        // Every Client API call goes to that host.
+        final List<http.Request> requests = <http.Request>[];
+        debugPayriffClientApiHttpClient = () =>
+            MockClient((http.Request request) async {
+              requests.add(request);
+              return http.Response(
+                jsonEncode(<String, Object?>{
+                  'code': '00000',
+                  'payload': <String, Object?>{'orderId': 'o1'},
+                }),
+                200,
+              );
+            });
+        addTearDown(() => debugPayriffClientApiHttpClient = null);
+        await Payriff.retrieveOrder(
+          orderId: 'o1',
+          clientSecret: testClientSecret,
+        );
+        expect(
+          requests.single.url.toString(),
+          '${c['apiBaseUrl']}/api/v3/client/orders/o1',
+        );
+      });
+    }
 
     test('idempotency keys are random version-4 UUIDs', () {
       final Set<String> keys = <String>{

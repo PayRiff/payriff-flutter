@@ -45,8 +45,9 @@ const Set<String> _inlineSubframeSchemes = <String>{
 /// loaded, the next main-frame navigation that is neither another callback
 /// nor `about:blank` ends the flow.
 final class ThreeDsNavigationPolicy {
-  /// Creates the rules for the API at [apiBaseUrl], for example
-  /// `https://api.payriff.com`.
+  /// Creates the rules for the API at [apiBaseUrl]
+  /// (`PayriffConfig.apiBaseUrl`), for example `https://api.payriff.com` or
+  /// `https://api.gccpay.sa`.
   ThreeDsNavigationPolicy(String apiBaseUrl)
     : _apiHost = _hostOf(Uri.parse(apiBaseUrl));
 

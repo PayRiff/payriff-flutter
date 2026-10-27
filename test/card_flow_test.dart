@@ -538,6 +538,64 @@ void main() {
       expect(find.byType(PayriffThreeDsSheet), findsNothing);
     });
 
+    testWidgets('region sa: every call goes to api.gccpay.sa, whose '
+        'callback ends the step and keeps its path in the log', (
+      WidgetTester tester,
+    ) async {
+      const String callback =
+          'https://api.gccpay.sa/api/v3/gateway/bank/callback/o1';
+      final List<PayriffLogEntry> logs = <PayriffLogEntry>[];
+      final StreamSubscription<PayriffLogEntry> sub = Payriff.logStream.listen(
+        logs.add,
+      );
+      addTearDown(sub.cancel);
+      final _Run run = await _start(
+        tester,
+        FakeClientBackend(
+          payPayload: _challenge(),
+          statuses: <String>['PENDING', 'APPROVED'],
+        ),
+        config: const PayriffConfig(
+          region: PayriffRegion.sa,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+        ),
+      );
+      await fillCard(tester);
+      final Future<PayriffResult> future = run.confirm();
+      await settleSheet(tester);
+      final FakeNavigationDelegate delegate = web.delegate;
+      // Another region's callback is just a page.
+      expect(await delegate.navigate(_callback), NavigationDecision.navigate);
+      expect(
+        await delegate.navigate(
+          'https://api.payriff.com/api/v3/gateway/bank/callback/o1',
+        ),
+        NavigationDecision.navigate,
+      );
+      expect(run.backend.statusChecks, 0);
+      expect(await delegate.navigate(callback), NavigationDecision.navigate);
+      _loadPage(delegate, callback);
+      final PayriffResult result = await pumpUntilDone(tester, future);
+
+      expect(result, isA<PayriffResultSuccess>());
+      expect(find.byType(PayriffThreeDsSheet), findsNothing);
+      expect(
+        run.backend.requests.map((http.Request r) => r.url.host).toSet(),
+        <String>{'api.gccpay.sa'},
+      );
+      expect(run.backend.statusChecks, 2);
+      expect(
+        logs.map((PayriffLogEntry e) => e.message),
+        containsAll(<String>[
+          'GET https://api.gccpay.sa/api/v3/client/orders/o1',
+          'POST https://api.gccpay.sa/api/v3/client/orders/o1/pay',
+          '3DS navigation $_callback: allow',
+          '3DS navigation $callback: allowCallback',
+        ]),
+      );
+    });
+
     testWidgets('a bank app link before the callback goes to the native '
         'launcher', (WidgetTester tester) async {
       final _Run run = await _start(

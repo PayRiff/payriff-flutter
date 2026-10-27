@@ -85,6 +85,24 @@ void main() {
     }
   });
 
+  test('the settings pass the region to PayriffConfig (az by default)', () {
+    final PayriffConfig config = ExampleSettings(
+      environment: PayriffEnvironment.production,
+      region: PayriffRegion.sa,
+      publishableKey: ' pr_pk_live_TEST ',
+    ).toConfig();
+    expect(config.region, PayriffRegion.sa);
+    expect(config.environment, PayriffEnvironment.production);
+    expect(config.apiBaseUrl, 'https://api.gccpay.sa');
+    expect(config.publishableKey, 'pr_pk_live_TEST');
+    expect(
+      ExampleSettings(
+        environment: PayriffEnvironment.sandbox,
+      ).toConfig().region,
+      PayriffRegion.az,
+    );
+  });
+
   testWidgets(
     'one screen: orderId, clientSecret and three pay buttons that wait for both',
     (WidgetTester tester) async {

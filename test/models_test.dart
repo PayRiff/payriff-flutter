@@ -191,19 +191,23 @@ void main() {
       const PayriffConfig config = PayriffConfig(
         publishableKey: ' pr_pk_live_SECRETISH ',
         environment: PayriffEnvironment.sandbox,
+        region: PayriffRegion.sa,
         language: PayriffLanguage.az,
         enableLogging: true,
         allowCompromisedDevices: true,
       );
       expect(
         config.toString(),
-        'PayriffConfig(environment: sandbox, language: AZ, '
+        'PayriffConfig(environment: sandbox, region: sa, language: AZ, '
         'enableLogging: true, allowCompromisedDevices: true, '
         'publishableKey: ***(20))',
       );
       expect(config.toString(), isNot(contains('SECRETISH')));
       const PayriffConfig defaults = PayriffConfig();
       expect(defaults.environment, PayriffEnvironment.production);
+      // CONTRACT §16.2: region az unless set.
+      expect(defaults.region, PayriffRegion.az);
+      expect(defaults.toString(), contains('region: az'));
       expect(defaults.language, isNull);
       expect(defaults.enableLogging, isFalse);
       // CONTRACT §16.16: compromised devices are refused by default.
@@ -289,15 +293,22 @@ void main() {
       expect(Payriff.version, match!.group(1));
     });
 
-    test('the card flow uses the contract hosts (CONTRACT §16.2)', () {
-      expect(
-        clientApiBaseUrl(PayriffEnvironment.production),
-        'https://api.payriff.com',
-      );
-      expect(
-        clientApiBaseUrl(PayriffEnvironment.sandbox),
-        'https://sb-api.payriff.com',
-      );
+    test('the API host of every region and environment keeps its paths in '
+        'the logs (CONTRACT §11, §16.2)', () {
+      for (final PayriffRegion region in PayriffRegion.values) {
+        for (final PayriffEnvironment environment
+            in PayriffEnvironment.values) {
+          final String base = PayriffConfig(
+            region: region,
+            environment: environment,
+          ).apiBaseUrl;
+          expect(
+            redactUrl('$base/api/v3/client/orders/o1/pay?x=1'),
+            '$base/api/v3/client/orders/o1/pay',
+            reason: '${region.name} ${environment.name}',
+          );
+        }
+      }
     });
 
     test('the status parser is PayriffPaymentStatus.parse', () {
@@ -357,6 +368,16 @@ void main() {
         redactUrl('https://api.payriff.com.evil.example/api/v3/x'),
         'https://api.payriff.com.evil.example',
       );
+      // Exact hosts only: no suffix or prefix matches.
+      for (final String host in <String>[
+        'api.gccpay.sa.evil.example',
+        'evil-api.gccpay.sa',
+        'x.api.gccpay.sa',
+        'gccpay.sa',
+        'pay.gccpay.sa',
+      ]) {
+        expect(redactUrl('https://$host/api/v3/x'), 'https://$host');
+      }
       expect(redactUrl('tel:+994121234567'), 'tel:…');
       expect(redactUrl('mailto:support@payriff.com'), 'mailto:…');
       expect(redactUrl('data:text/html;base64,PGh0bWw+'), 'data:…');
@@ -380,6 +401,18 @@ void main() {
       expect(
         redactUrl('https://sb-api.payriff.com/api/v3/client/orders/o1/status'),
         'https://sb-api.payriff.com/api/v3/client/orders/o1/status',
+      );
+      // Region sa's host (CONTRACT §16.2).
+      expect(
+        redactUrl(
+          'https://api.gccpay.sa/api/v3/client/orders/'
+          '7c9e6679-7425-40de-944b-e07fc1f90ae7/pay?x=1#f',
+        ),
+        'https://api.gccpay.sa/api/v3/client/orders/7c9e…0ae7/pay',
+      );
+      expect(
+        redactUrl('https://api.gccpay.sa/api/v3/gateway/bank/callback/1'),
+        'https://api.gccpay.sa/api/v3/gateway/bank/callback/1',
       );
       // 15 characters stay, 16 are shortened.
       expect(
@@ -461,6 +494,10 @@ void main() {
       expect(
         redactUrl('https://Sb-Api.Payriff.Com/api/v3/client/orders/o1'),
         'https://sb-api.payriff.com/api/v3/client/orders/o1',
+      );
+      expect(
+        redactUrl('HTTPS://API.GCCPAY.SA/api/v3/client/orders/o1/status'),
+        'https://api.gccpay.sa/api/v3/client/orders/o1/status',
       );
       expect(redactUrl('TEL:+994121234567'), 'TEL:…');
     });
@@ -615,7 +652,7 @@ void main() {
         entries.any(
           (PayriffLogEntry e) =>
               e.message ==
-              'Configured: environment sandbox, publishable key '
+              'Configured: environment sandbox, region az, publishable key '
                   '***(${key.length})',
         ),
         isTrue,

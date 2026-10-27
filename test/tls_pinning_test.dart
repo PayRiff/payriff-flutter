@@ -1,10 +1,13 @@
 // CONTRACT §16.15: certificate pinning of the SDK's own HTTP client. Every
 // section of test/vectors/tls_pins.json is asserted here: the hosts and the
 // trust anchors are the vector's, the anchors are the pinned roots, the
-// current chain of api.payriff.com passes and an interception proxy's chain
-// does not (pure checks on the parsed certificates, without validity dates).
+// current chains of api.payriff.com and api.gccpay.sa pass and an
+// interception proxy's chain does not (pure checks on the parsed
+// certificates, without validity dates).
 // The pinned client then refuses a real TLS server on the loopback interface
-// whose throwaway TEST certificate it does not trust. No Payriff API and no
+// whose throwaway TEST certificate it does not trust, and a client with the
+// same kind of trust accepts a TEST chain shaped like api.gccpay.sa's (the
+// root sent cross-signed by another root). No Payriff API and no
 // external network is involved; this file has no widget tests, so the
 // flutter_test binding's HTTP mock is not installed.
 import 'dart:convert';
@@ -77,10 +80,17 @@ void main() {
   group('tls_pins.json', () {
     test('the hosts and the trust anchors are the vector, in order', () {
       expect(payriffPinnedHosts, _vector['hosts']);
-      expect(<String>[
-        for (final PayriffEnvironment e in PayriffEnvironment.values)
-          Uri.parse(clientApiBaseUrl(e)).host,
-      ], payriffPinnedHosts);
+      // The API hosts of every region and environment (CONTRACT §16.2).
+      expect(
+        <String>{
+          for (final PayriffRegion r in PayriffRegion.values)
+            for (final PayriffEnvironment e in PayriffEnvironment.values)
+              Uri.parse(
+                PayriffConfig(region: r, environment: e).apiBaseUrl,
+              ).host,
+        }.toList(),
+        payriffPinnedHosts,
+      );
       expect(
         payriffTrustAnchors
             .map(
@@ -163,6 +173,56 @@ void main() {
       );
     });
 
+    test('the anchors contain the root of the api.gccpay.sa chain, which it '
+        'sends cross-signed', () {
+      final List<Certificate> chain = _chain('gccpayChain');
+      final Certificate leaf = chain[0];
+      final Certificate wr3 = chain[1];
+      final Certificate crossSigned = chain[2];
+      expect(leaf.isIssuedBy(wr3), isTrue);
+      // WR3 is not pinned; it is issued by GTS Root R1, an anchor ...
+      expect(_pins, isNot(contains(wr3.pin)));
+      final Certificate r1 = _anchors.singleWhere(
+        (Certificate a) => listEquals(a.subject, wr3.issuer),
+      );
+      expect(r1.isSelfIssued, isTrue);
+      expect(wr3.isIssuedBy(r1), isTrue);
+      // ... which the chain carries cross-signed by GlobalSign Root CA, with
+      // R1's subject and key. GlobalSign Root CA is no anchor, so the path
+      // must end at the self-signed R1.
+      expect(crossSigned.sameCa(r1), isTrue);
+      expect(crossSigned.isSelfIssued, isFalse);
+      expect(
+        _anchors.where(
+          (Certificate a) => listEquals(a.subject, crossSigned.issuer),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('the pin check accepts the api.gccpay.sa chain', () {
+      final List<Certificate> chain = _chain('gccpayChain');
+      // CONTRACT §16.15: a certificate of the chain has a pinned key ...
+      expect(chain.where((Certificate c) => _pins.contains(c.pin)), isNotEmpty);
+      // ... and Flutter's anchors end the path from the leaf.
+      expect(chainEndsAtAnchor(chain, _anchors), isTrue);
+      // Without the anchors that it chains to, it fails.
+      expect(
+        chainEndsAtAnchor(
+          chain,
+          _anchors
+              .where(
+                (Certificate a) => !chain.any(
+                  (Certificate c) =>
+                      c.sameCa(a) || listEquals(c.issuer, a.subject),
+                ),
+              )
+              .toList(),
+        ),
+        isFalse,
+      );
+    });
+
     test('the pin check refuses an interception proxy\'s chain', () {
       final List<Certificate> chain = _chain('interceptedChain');
       // A valid chain in itself: the test CA signed the leaf ...
@@ -173,7 +233,7 @@ void main() {
     });
 
     test('every anchor loads into a security context', () {
-      expect(payriffTrustAnchors, hasLength(13));
+      expect(payriffTrustAnchors, hasLength(14));
       for (final ({String name, String pem}) anchor in payriffTrustAnchors) {
         expect(
           () => SecurityContext().setTrustedCertificatesBytes(
@@ -241,12 +301,13 @@ void main() {
 
     setUpAll(() => certificates = TestCertificates.create());
 
-    setUp(() async {
-      served = <String>[];
+    // A TLS server on the loopback interface that sends [chain], adds each
+    // request's path to `served` and answers with an order.
+    Future<HttpServer> serve(TestCertificates chain) async {
       final SecurityContext serverContext = SecurityContext()
-        ..useCertificateChainBytes(utf8.encode(certificates.serverChainPem))
-        ..usePrivateKeyBytes(utf8.encode(certificates.serverKeyPem));
-      server = await HttpOverrides.runWithHttpOverrides(
+        ..useCertificateChainBytes(utf8.encode(chain.serverChainPem))
+        ..usePrivateKeyBytes(utf8.encode(chain.serverKeyPem));
+      final HttpServer server = await HttpOverrides.runWithHttpOverrides(
         () => HttpServer.bindSecure(
           InternetAddress.loopbackIPv4,
           0,
@@ -267,6 +328,12 @@ void main() {
         onError: (Object _) {},
       );
       addTearDown(() => server.close(force: true));
+      return server;
+    }
+
+    setUp(() async {
+      served = <String>[];
+      server = await serve(certificates);
     });
 
     String base() => 'https://localhost:${server.port}';
@@ -293,6 +360,43 @@ void main() {
         await response.drain<void>();
       }, _RealHttp());
       expect(served, <String>['/api/v3/client/orders/o1']);
+    });
+
+    test('a client that trusts only a self-signed root accepts a chain '
+        'that sends the root cross-signed, as api.gccpay.sa does', () async {
+      final TestCertificates chain = TestCertificates.crossSigned();
+      final HttpServer crossSigned = await serve(chain);
+      // The SDK's kind of trust (payriffSecurityContext): no trusted roots
+      // but the anchors, and no badCertificateCallback.
+      Future<Object> get({required bool withAnchor}) =>
+          HttpOverrides.runWithHttpOverrides(() async {
+            final SecurityContext context = SecurityContext(
+              // ignore: avoid_redundant_argument_values
+              withTrustedRoots: false,
+            );
+            if (withAnchor) {
+              context.setTrustedCertificatesBytes(utf8.encode(chain.caPem));
+            }
+            final HttpClient client = HttpClient(context: context)
+              ..badCertificateCallback = (X509Certificate c, String h, int p) =>
+                  false;
+            addTearDown(client.close);
+            try {
+              final HttpClientResponse response = await (await client.getUrl(
+                Uri.parse('https://localhost:${crossSigned.port}/cross'),
+              )).close();
+              await response.drain<void>();
+              return response.statusCode;
+            } on TlsException catch (e) {
+              return e;
+            }
+          }, _RealHttp());
+      // The path ends at the self-signed root, not at the root that
+      // cross-signed it, which nobody trusts ...
+      expect(await get(withAnchor: true), 200);
+      // ... and without that anchor the same chain is refused.
+      expect(await get(withAnchor: false), isA<TlsException>());
+      expect(served, <String>['/cross']);
     });
 
     test('the Client API refuses it before sending anything', () async {

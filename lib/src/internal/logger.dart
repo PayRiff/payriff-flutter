@@ -68,10 +68,13 @@ final class SdkLogger {
 // A URL scheme at the start of a string: RFC 3986 `scheme ":"`.
 final RegExp _leadingScheme = RegExp(r'^([A-Za-z][A-Za-z0-9+.\-]*):');
 
-/// Payriff's API hosts: the only hosts whose URL paths reach the logs.
+/// Payriff's API hosts, of every region and environment
+/// (`PayriffConfig.apiBaseUrl`): the only hosts whose URL paths reach the
+/// logs.
 const Set<String> _payriffApiHosts = <String>{
   'api.payriff.com',
   'sb-api.payriff.com',
+  'api.gccpay.sa',
 };
 
 /// A path segment this long or longer is logged as its first and last 4
@@ -98,8 +101,8 @@ bool _isSlash(int c) => c == _slash || c == _backslash;
 ///
 /// * `http` and `https` URLs lose their user info (`user:password@`), query
 ///   string and fragment. Only Payriff's API hosts (`api.payriff.com`,
-///   `sb-api.payriff.com`) keep the path, and every path segment of 16 or
-///   more characters is shortened to its first and last 4
+///   `sb-api.payriff.com`, `api.gccpay.sa`) keep the path, and every path
+///   segment of 16 or more characters is shortened to its first and last 4
 ///   (`https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/pay`). Any
 ///   other host, such as a bank's 3-D Secure page, is logged as
 ///   `scheme://host[:port]` only. Scheme and host are lower-cased.

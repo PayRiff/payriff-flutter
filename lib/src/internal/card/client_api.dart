@@ -12,7 +12,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
-import '../../config.dart';
 import '../../error.dart';
 import '../http_log.dart';
 import '../logger.dart';
@@ -39,14 +38,6 @@ const Duration payNetworkRetryDelay = Duration(seconds: 1);
 /// The largest response body the SDK reads. Payriff's answers are a few
 /// kilobytes; anything larger is refused instead of filling memory.
 const int maxResponseBytes = 1024 * 1024;
-
-/// The card flow's API host per environment (CONTRACT §16.2). The sandbox
-/// host is provisional until Payriff confirms it; it lives only here.
-String clientApiBaseUrl(PayriffEnvironment environment) =>
-    switch (environment) {
-      PayriffEnvironment.production => 'https://api.payriff.com',
-      PayriffEnvironment.sandbox => 'https://sb-api.payriff.com',
-    };
 
 /// Replaces the HTTP client of new [ClientApi]s (CONTRACT §16.2: "a
 /// test-only hook may inject a transport"). For tests only: ignored outside
@@ -162,7 +153,7 @@ final class ClientApi {
            (kDebugMode ? debugPayriffClientApiHttpClient?.call() : null) ??
            IOClient(pinnedHttpClient());
 
-  /// The API base URL without a trailing slash.
+  /// The API base URL without a trailing slash: `PayriffConfig.apiBaseUrl`.
   final String baseUrl;
 
   final String _publishableKey;

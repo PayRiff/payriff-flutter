@@ -14,66 +14,70 @@ import 'package:crypto/crypto.dart' as crypto;
 /// hour ago for one day (Apple refuses server certificates valid for more
 /// than 825 days).
 final class TestCertificates {
-  TestCertificates._(this.caPem, this.serverPem, this.serverKeyPem);
+  TestCertificates._(
+    this.caPem,
+    this.serverPem,
+    this.serverKeyPem, {
+    String? intermediatesPem,
+  }) : serverChainPem = '$serverPem${intermediatesPem ?? caPem}';
 
   /// Makes new keys and certificates.
   factory TestCertificates.create() {
-    final DateTime now = DateTime.now().toUtc();
-    final DateTime from = now.subtract(const Duration(hours: 1));
-    final DateTime to = now.add(const Duration(days: 1));
+    final (DateTime from, DateTime to) = _validity();
     final _KeyPair ca = _KeyPair.generate();
     final _KeyPair server = _KeyPair.generate();
     final List<int> caName = _name('Payriff SDK TEST CA');
-    final Uint8List caCertificate = _certificate(
-      issuer: caName,
-      issuerKey: ca,
-      subject: caName,
-      subjectKey: ca,
-      from: from,
-      to: to,
-      extensions: <List<int>>[
-        // basicConstraints, critical: CA.
-        _extension(_oidBasicConstraints, _sequence(<List<int>>[_true])),
-        // keyUsage, critical: keyCertSign and cRLSign.
-        _extension(_oidKeyUsage, _tlv(0x03, <int>[0x01, 0x06])),
-      ],
-    );
-    final Uint8List serverCertificate = _certificate(
-      issuer: caName,
-      issuerKey: ca,
-      subject: _name('localhost'),
-      subjectKey: server,
-      from: from,
-      to: to,
-      extensions: <List<int>>[
-        _extension(_oidBasicConstraints, _sequence(const <List<int>>[])),
-        // keyUsage, critical: digitalSignature.
-        _extension(_oidKeyUsage, _tlv(0x03, <int>[0x07, 0x80])),
-        // extKeyUsage: serverAuth.
-        _extension(
-          _oidExtKeyUsage,
-          _sequence(<List<int>>[_tlv(0x06, _oidServerAuth)]),
-          critical: false,
-        ),
-        // subjectAltName: DNS localhost, IP 127.0.0.1.
-        _extension(
-          _oidSubjectAltName,
-          _sequence(<List<int>>[
-            _tlv(0x82, ascii.encode('localhost')),
-            _tlv(0x87, <int>[127, 0, 0, 1]),
-          ]),
-          critical: false,
-        ),
-      ],
-    );
     return TestCertificates._(
-      _pem('CERTIFICATE', caCertificate),
-      _pem('CERTIFICATE', serverCertificate),
+      _pem('CERTIFICATE', _caCertificate(caName, ca, caName, ca, from, to)),
+      _pem('CERTIFICATE', _serverCertificate(caName, ca, server, from, to)),
       _pem('PRIVATE KEY', server.pkcs8()),
     );
   }
 
-  /// The TEST CA's certificate.
+  /// A chain shaped like api.gccpay.sa's (CONTRACT §16.15): the server
+  /// certificate is issued by an intermediate of a TEST root, and the server
+  /// sends that root cross-signed by a second TEST root, which nobody
+  /// trusts. [caPem] is the self-signed first root, so a client that trusts
+  /// only it must end the path there.
+  factory TestCertificates.crossSigned() {
+    final (DateTime from, DateTime to) = _validity();
+    final _KeyPair root = _KeyPair.generate();
+    final _KeyPair otherRoot = _KeyPair.generate();
+    final _KeyPair intermediate = _KeyPair.generate();
+    final _KeyPair server = _KeyPair.generate();
+    final List<int> rootName = _name('Payriff SDK TEST Root');
+    final List<int> otherRootName = _name('Payriff SDK TEST Other Root');
+    final List<int> intermediateName = _name('Payriff SDK TEST Intermediate');
+    return TestCertificates._(
+      _pem(
+        'CERTIFICATE',
+        _caCertificate(rootName, root, rootName, root, from, to),
+      ),
+      _pem(
+        'CERTIFICATE',
+        _serverCertificate(intermediateName, intermediate, server, from, to),
+      ),
+      _pem('PRIVATE KEY', server.pkcs8()),
+      intermediatesPem:
+          _pem(
+            'CERTIFICATE',
+            _caCertificate(
+              rootName,
+              root,
+              intermediateName,
+              intermediate,
+              from,
+              to,
+            ),
+          ) +
+          _pem(
+            'CERTIFICATE',
+            _caCertificate(otherRootName, otherRoot, rootName, root, from, to),
+          ),
+    );
+  }
+
+  /// The TEST CA's certificate: the root a client trusts.
   final String caPem;
 
   /// The server certificate for `localhost` and `127.0.0.1`.
@@ -82,9 +86,77 @@ final class TestCertificates {
   /// The server's private key, PKCS #8.
   final String serverKeyPem;
 
-  /// What the server sends: its certificate, then the CA.
-  String get serverChainPem => '$serverPem$caPem';
+  /// What the server sends: its certificate, then the CA (or the
+  /// intermediate and the cross-signed root).
+  final String serverChainPem;
 }
+
+(DateTime, DateTime) _validity() {
+  final DateTime now = DateTime.now().toUtc();
+  return (
+    now.subtract(const Duration(hours: 1)),
+    now.add(const Duration(days: 1)),
+  );
+}
+
+/// A CA certificate for [subject] and [subjectKey], signed by [issuerKey].
+Uint8List _caCertificate(
+  List<int> issuer,
+  _KeyPair issuerKey,
+  List<int> subject,
+  _KeyPair subjectKey,
+  DateTime from,
+  DateTime to,
+) => _certificate(
+  issuer: issuer,
+  issuerKey: issuerKey,
+  subject: subject,
+  subjectKey: subjectKey,
+  from: from,
+  to: to,
+  extensions: <List<int>>[
+    // basicConstraints, critical: CA.
+    _extension(_oidBasicConstraints, _sequence(<List<int>>[_true])),
+    // keyUsage, critical: keyCertSign and cRLSign.
+    _extension(_oidKeyUsage, _tlv(0x03, <int>[0x01, 0x06])),
+  ],
+);
+
+/// A server certificate for `localhost` and `127.0.0.1`.
+Uint8List _serverCertificate(
+  List<int> issuer,
+  _KeyPair issuerKey,
+  _KeyPair serverKey,
+  DateTime from,
+  DateTime to,
+) => _certificate(
+  issuer: issuer,
+  issuerKey: issuerKey,
+  subject: _name('localhost'),
+  subjectKey: serverKey,
+  from: from,
+  to: to,
+  extensions: <List<int>>[
+    _extension(_oidBasicConstraints, _sequence(const <List<int>>[])),
+    // keyUsage, critical: digitalSignature.
+    _extension(_oidKeyUsage, _tlv(0x03, <int>[0x07, 0x80])),
+    // extKeyUsage: serverAuth.
+    _extension(
+      _oidExtKeyUsage,
+      _sequence(<List<int>>[_tlv(0x06, _oidServerAuth)]),
+      critical: false,
+    ),
+    // subjectAltName: DNS localhost, IP 127.0.0.1.
+    _extension(
+      _oidSubjectAltName,
+      _sequence(<List<int>>[
+        _tlv(0x82, ascii.encode('localhost')),
+        _tlv(0x87, <int>[127, 0, 0, 1]),
+      ]),
+      critical: false,
+    ),
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // P-256 and ECDSA with SHA-256

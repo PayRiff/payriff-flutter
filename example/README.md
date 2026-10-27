@@ -16,12 +16,13 @@ cp config.example.json config.json   # config.json is git-ignored
 flutter run --dart-define-from-file=config.json
 ```
 
-`config.json` keys (the app reads only these two):
+`config.json` keys (the app reads only these three):
 
 | Key | Values |
 |---|---|
 | `PAYRIFF_PUBLISHABLE_KEY` | The publishable key of your Payriff application (`pr_pk_live_…`). Safe to ship: it only works with an order's `clientSecret`. |
 | `PAYRIFF_ENVIRONMENT` | `sandbox` (default) or `production`. |
+| `PAYRIFF_REGION` | `az` (default, `api.payriff.com`) or `sa` (Saudi Arabia, GCC Pay, `api.gccpay.sa`). **Region `sa` has no sandbox:** with `PAYRIFF_ENVIRONMENT` `sandbox` its payments still go to production and charge real cards. |
 
 Payriff only accepts apps it knows: ask Payriff to allow the bundle id and
 package name `com.payriff.example.flutter` for your publishable key.

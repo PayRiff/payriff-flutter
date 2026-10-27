@@ -5,9 +5,11 @@
 /// certificates of the pinned root CAs, never the device's trust store, so a
 /// chain must end at one of them. They are Payriff's current roots (Sectigo
 /// Public Server Authentication Root R46 and USERTrust RSA, which cross-signs
-/// it) and backup roots of other major CAs. A yearly renewal of Payriff's
-/// certificate keeps working; a move to a CA outside this list needs an SDK
-/// update first.
+/// it), the roots of `api.gccpay.sa` (Google Trust Services: GTS Root R1,
+/// which that host sends cross-signed by GlobalSign Root CA, and GTS Root R4
+/// for Google's ECDSA chains) and backup roots of other major CAs. A yearly
+/// renewal of Payriff's certificate keeps working; a move to a CA outside
+/// this list needs an SDK update first.
 library;
 
 import 'dart:convert';
@@ -17,11 +19,12 @@ import 'package:flutter/foundation.dart';
 
 import '../../error.dart';
 
-/// The hosts whose connections are pinned: the card flow's API hosts
-/// (`clientApiBaseUrl`).
+/// The hosts whose connections are pinned: the card flow's API hosts of
+/// every region and environment (`PayriffConfig.apiBaseUrl`).
 const List<String> payriffPinnedHosts = <String>[
   'api.payriff.com',
   'sb-api.payriff.com',
+  'api.gccpay.sa',
 ];
 
 /// The self-signed certificates of the pinned root CAs (`trustAnchors`), in
@@ -378,6 +381,23 @@ u+YfjyW6hY0XHgL+XVAEV8/+LbzvXMAaq7afJMbfc2hIkCwU9D9SGuTSyxTDYWnP
 4vkYxboznxSjBF25cfe1lNj2M8FawTSLfJvdkzrnE6JwYZ+vj+vYxXX4M2bUdGc6
 N3ec592kD3ZDZopD8p/7DEJ4Y9HiD2971KE9dJeFt0g5QdYg/NA6s/rob8SKunE3
 vouXsXgxT7PntgMTzlSdriVZzH81Xwj3QEUxeCp6
+-----END CERTIFICATE-----''',
+      ),
+      (
+        name: 'GTS Root R4',
+        pem: r'''
+-----BEGIN CERTIFICATE-----
+MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD
+VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG
+A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw
+WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz
+IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi
+AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi
+QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR
+HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW
+BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D
+9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8
+p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD
 -----END CERTIFICATE-----''',
       ),
     ];

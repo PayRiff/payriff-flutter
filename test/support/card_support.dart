@@ -42,7 +42,9 @@ class FakeCardClock implements CardClock {
 /// A Client API session against the sandbox with the test keys.
 ClientApi testClientApi(CardClock clock, {String? appId = testAppId}) =>
     ClientApi(
-      baseUrl: clientApiBaseUrl(PayriffEnvironment.sandbox),
+      baseUrl: const PayriffConfig(
+        environment: PayriffEnvironment.sandbox,
+      ).apiBaseUrl,
       publishableKey: testPublishableKey,
       clientSecret: testClientSecret,
       appId: appId,

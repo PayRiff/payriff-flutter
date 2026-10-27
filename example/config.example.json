@@ -1,4 +1,5 @@
 {
   "PAYRIFF_PUBLISHABLE_KEY": "",
-  "PAYRIFF_ENVIRONMENT": "sandbox"
+  "PAYRIFF_ENVIRONMENT": "sandbox",
+  "PAYRIFF_REGION": "az"
 }

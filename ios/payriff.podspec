@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'payriff'
-  s.version          = '1.0.0-rc.1'
+  s.version          = '1.0.0-rc.2'
   s.summary          = 'Payriff payments for Flutter: native card encryption, screen protection and device checks.'
   s.description      = <<-DESC
 Native half of the payriff Flutter plugin: card encryption (CryptoKit AES-GCM and

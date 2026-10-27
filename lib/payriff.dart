@@ -27,7 +27,7 @@ export 'src/card/client_order.dart' show PayriffClientOrder;
 export 'src/card/payment_view.dart' show PayriffPaymentView;
 export 'src/card/payment_view_style.dart' show PayriffPaymentViewStyle;
 export 'src/config.dart'
-    show PayriffConfig, PayriffEnvironment, PayriffLanguage;
+    show PayriffConfig, PayriffEnvironment, PayriffLanguage, PayriffRegion;
 export 'src/error.dart' show PayriffError, PayriffErrorCode, PayriffException;
 export 'src/log.dart' show PayriffLogEntry, PayriffLogLevel;
 export 'src/payriff.dart' show Payriff;

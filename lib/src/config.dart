@@ -1,14 +1,33 @@
 import 'package:flutter/foundation.dart';
 
-/// The Payriff environment the SDK talks to.
+/// The Payriff environment the SDK talks to. Together with [PayriffRegion]
+/// it picks the API host, [PayriffConfig.apiBaseUrl].
 enum PayriffEnvironment {
-  /// Live payments: the Client API at `https://api.payriff.com`.
+  /// Live payments: the Client API of the region, `https://api.payriff.com`
+  /// for [PayriffRegion.az].
   production,
 
   /// Test payments with Payriff's sandbox cards: the Client API at
-  /// `https://sb-api.payriff.com`. That host is provisional until Payriff
-  /// confirms it (CONTRACT §16.2).
+  /// `https://sb-api.payriff.com`, region [PayriffRegion.az]'s sandbox. That
+  /// host is provisional until Payriff confirms it (CONTRACT §16.2).
+  ///
+  /// [PayriffRegion.sa] has no sandbox: its sandbox payments go to
+  /// production (`https://api.gccpay.sa`) and charge real cards.
   sandbox,
+}
+
+/// The Payriff region whose Client API the SDK talks to (CONTRACT §16.2).
+enum PayriffRegion {
+  /// Azerbaijan, the default: `https://api.payriff.com`, and
+  /// `https://sb-api.payriff.com` in [PayriffEnvironment.sandbox].
+  az,
+
+  /// Saudi Arabia (GCC Pay): `https://api.gccpay.sa`.
+  ///
+  /// There is no Saudi sandbox: [PayriffEnvironment.sandbox] uses
+  /// `https://api.gccpay.sa` too, so its payments charge real cards, and
+  /// `Payriff.configure` logs a warning.
+  sa,
 }
 
 /// Languages of the SDK's card form and 3-D Secure sheet.
@@ -43,6 +62,7 @@ final class PayriffConfig {
   const PayriffConfig({
     this.publishableKey,
     this.environment = PayriffEnvironment.production,
+    this.region = PayriffRegion.az,
     this.language,
     this.enableLogging = false,
     this.allowCompromisedDevices = false,
@@ -59,6 +79,12 @@ final class PayriffConfig {
 
   /// The Payriff environment. Defaults to [PayriffEnvironment.production].
   final PayriffEnvironment environment;
+
+  /// The Payriff region. Defaults to [PayriffRegion.az].
+  ///
+  /// [PayriffRegion.sa] has no sandbox: with [PayriffEnvironment.sandbox],
+  /// payments go to production and charge real cards.
+  final PayriffRegion region;
 
   /// The language of the card form and of the 3-D Secure sheet. `null` uses
   /// the device language (Azerbaijani, Russian, otherwise English).
@@ -85,6 +111,28 @@ final class PayriffConfig {
   /// left on never reaches the app you ship.
   final bool allowCompromisedDevices;
 
+  /// The Client API base URL of [region] and [environment] (CONTRACT
+  /// §16.2), without a trailing slash. Every card call, the 3-D Secure
+  /// callback check, certificate pinning and log redaction use its host.
+  ///
+  /// * [PayriffRegion.az]: `https://api.payriff.com`, and
+  ///   `https://sb-api.payriff.com` in [PayriffEnvironment.sandbox] (that
+  ///   host is provisional).
+  /// * [PayriffRegion.sa]: `https://api.gccpay.sa` in both environments.
+  ///   There is no Saudi sandbox: sandbox payments charge real cards.
+  String get apiBaseUrl => switch ((region, environment)) {
+    (PayriffRegion.az, PayriffEnvironment.production) =>
+      'https://api.payriff.com',
+    // Provisional until Payriff confirms it; it lives only here.
+    (PayriffRegion.az, PayriffEnvironment.sandbox) =>
+      'https://sb-api.payriff.com',
+    (PayriffRegion.sa, PayriffEnvironment.production) =>
+      'https://api.gccpay.sa',
+    // No Saudi sandbox (owner decision 2026-10-27): sandbox payments go to
+    // production.
+    (PayriffRegion.sa, PayriffEnvironment.sandbox) => 'https://api.gccpay.sa',
+  };
+
   /// A description without secrets: the publishable key is shown as
   /// `***(<length>)`.
   @override
@@ -94,7 +142,8 @@ final class PayriffConfig {
         ? 'null'
         : '***(${publishable.length})';
     return 'PayriffConfig(environment: ${environment.name}, '
-        'language: ${language?.value}, enableLogging: $enableLogging, '
+        'region: ${region.name}, language: ${language?.value}, '
+        'enableLogging: $enableLogging, '
         'allowCompromisedDevices: $allowCompromisedDevices, '
         'publishableKey: $publishableText)';
   }

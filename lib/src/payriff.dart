@@ -50,7 +50,7 @@ import 'result.dart';
 /// ```
 abstract final class Payriff {
   /// The version of this package.
-  static const String version = '1.0.0-rc.1';
+  static const String version = '1.0.0-rc.2';
 
   static PayriffConfig? _config;
   static bool _cardPaymentActive = false;
@@ -75,14 +75,24 @@ abstract final class Payriff {
   /// logged as a warning (`Invalid configuration: …`) and makes the card
   /// calls fail with [PayriffErrorCode.invalidConfig]. Outside debug builds
   /// `PayriffConfig.allowCompromisedDevices` is ignored, with a warning.
+  /// [PayriffRegion.sa] with [PayriffEnvironment.sandbox] logs a warning:
+  /// that region has no sandbox, so its payments charge real cards.
   static void configure(PayriffConfig config) {
     _config = config;
     final SdkLogger logger = _loggerFor(config);
     final String? key = trimToNull(config.publishableKey);
     logger.info(
       'Configured: environment ${config.environment.name}, '
-      'publishable key ${redactSecret(key)}',
+      'region ${config.region.name}, publishable key ${redactSecret(key)}',
     );
+    // CONTRACT §16.2: region sa has no sandbox.
+    if (config.region == PayriffRegion.sa &&
+        config.environment == PayriffEnvironment.sandbox) {
+      logger.warning(
+        'Region sa has no sandbox: card payments go to production '
+        '(${config.apiBaseUrl}) and charge real cards.',
+      );
+    }
     if (key != null && usablePublishableKey(key) == null) {
       logger.warning(
         'Invalid configuration: publishableKey is not a publishable key '
@@ -206,7 +216,7 @@ abstract final class Payriff {
     final bool material = context.mounted
         ? SheetPresenter.prefersMaterial(context)
         : defaultTargetPlatform != TargetPlatform.iOS;
-    final String apiBaseUrl = clientApiBaseUrl(config.environment);
+    final String apiBaseUrl = config.apiBaseUrl;
     // Claimed before the first await, so a second tap cannot start another
     // payment.
     _cardPaymentActive = true;
@@ -304,7 +314,7 @@ abstract final class Payriff {
     final PayriffError? argumentError = _cardArgumentError(id, secret);
     if (argumentError != null) throw PayriffException(argumentError);
     final ClientApi api = ClientApi(
-      baseUrl: clientApiBaseUrl(config.environment),
+      baseUrl: config.apiBaseUrl,
       publishableKey: publishableKey,
       clientSecret: secret!,
       appId: await NativeBridge.appId(),

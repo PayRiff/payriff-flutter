@@ -46,7 +46,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.1`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.2`).
 
 Then complete the [platform setup](#platform-setup).
 
@@ -437,10 +437,33 @@ configuration applies to later calls.
 | `PayriffConfig` field | Default | Notes |
 |---|---|---|
 | `publishableKey` | `null` | Your application's publishable key (`pr_pk_live_…`), sent as `X-Public-Key`. Safe to ship: it only works with an order's `clientSecret`. A missing key, or any other kind of key (for example the secret key), makes the card calls fail with `invalidConfig`. |
-| `environment` | `production` | `production` uses `https://api.payriff.com`, `sandbox` uses `https://sb-api.payriff.com`. The sandbox host is provisional until Payriff confirms it. |
+| `environment` | `production` | `PayriffEnvironment.production` or `sandbox`. With `region`, it picks the API host (see [Regions](#regions)). `sandbox` is region `az`'s sandbox, `https://sb-api.payriff.com`; that host is provisional until Payriff confirms it. Region `sa` has no sandbox. |
+| `region` | `az` | `PayriffRegion.az` (`https://api.payriff.com`) or `PayriffRegion.sa` (Saudi Arabia, GCC Pay, `https://api.gccpay.sa`). See [Regions](#regions). |
 | `language` | `null` | `PayriffLanguage.az`, `en` or `ru` for the form and the 3-D Secure sheet. `null` uses the device language (Azerbaijani, Russian, otherwise English). |
 | `enableLogging` | `false` | See [Logging](#logging). |
 | `allowCompromisedDevices` | `false` | In debug builds (`kDebugMode`), `true` lets card payments run on a rooted or jailbroken device or with a hooking tool, and only logs a warning that names what was found. Profile and release builds ignore it with a warning and refuse such devices, so a flag left on never reaches the app you ship. For development on test devices. See [Security](#security). |
+
+### Regions
+
+`region` and `environment` pick the Client API host, and
+`PayriffConfig.apiBaseUrl` returns it. Every card call, the 3-D Secure
+callback check, certificate pinning and log redaction use that host.
+
+| `region` | `environment` | API host |
+|---|---|---|
+| `az` (default) | `production` | `https://api.payriff.com` |
+| `az` | `sandbox` | `https://sb-api.payriff.com` (provisional until Payriff confirms it) |
+| `sa` | `production` | `https://api.gccpay.sa` (Saudi Arabia, GCC Pay) |
+| `sa` | `sandbox` | `https://api.gccpay.sa`: there is no Saudi sandbox |
+
+> **Warning: region `sa` has no sandbox.** With
+> `environment: PayriffEnvironment.sandbox`, region `sa` still sends card
+> payments to production (`https://api.gccpay.sa`), and they **charge real
+> cards**. `Payriff.configure` logs a warning for this combination when
+> `enableLogging` is on.
+
+Everything else is the same in both regions: the endpoints and headers, the
+publishable key rule, the card encryption key, 3-D Secure and the results.
 
 ## Handling `PayriffResult`
 
@@ -516,10 +539,10 @@ logged bodies, is redacted by one rule:
 
 - `http(s)` URLs lose their user info (`user:password@`), query string and
   fragment.
-- Only Payriff's API hosts (`api.payriff.com`, `sb-api.payriff.com`) keep
-  the path, and every path segment of 16 or more characters is shortened to
-  its first and last 4 characters:
-  `https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/pay`.
+- Only Payriff's API hosts (`api.payriff.com`, `sb-api.payriff.com` and
+  `api.gccpay.sa`, of every [region](#regions)) keep the path, and every
+  path segment of 16 or more characters is shortened to its first and last
+  4 characters: `https://api.payriff.com/api/v3/client/orders/7c9e…0ae7/pay`.
 - Any other host, such as a bank's 3-D Secure page, is logged as
   `scheme://host[:port]` only.
 - Any other scheme is logged as `<scheme>:…`, so a `tel:` number or a
@@ -540,9 +563,11 @@ unless you collect the entries yourself.
 ## Security
 
 - **Certificate pinning.** Every Client API call of the SDK (order, pay,
-  3-D Secure steps, status) to `api.payriff.com` and `sb-api.payriff.com`
-  trusts only Payriff's certificate authorities: the current Sectigo roots
-  and backup roots of other major CAs, never the device's trust store. A
+  3-D Secure steps, status) to `api.payriff.com`, `sb-api.payriff.com` and
+  `api.gccpay.sa` trusts only Payriff's certificate authorities: the current
+  Sectigo roots (`*.payriff.com`), Google Trust Services' GTS Root R1 and
+  R4 (`*.gccpay.sa`) and backup roots of other major CAs, never the device's
+  trust store. A
   certificate that fails the check, for example from a proxy such as Charles
   or Burp, fails the call with `networkError` (`isRetryable: false`,
   "Payriff's server certificate could not be verified."); nothing is sent.
@@ -657,7 +682,7 @@ See [example/README.md](example/README.md).
 | `invalidConfig` | Set `publishableKey` to your application's `pr_pk_live_…` key. The secret key is always refused. |
 | `invalidOrder` | Pass the `orderId` and the `clientSecret` (`pr_cs_…`) your server got when it created the order. |
 | `unauthorized` | The publishable key is wrong or revoked, or this app's bundle id / package name is not allowed for it. |
-| `sessionExpired` | The order does not exist in the selected environment, or its `clientSecret` expired. Create a new order. |
+| `sessionExpired` | The order does not exist in the selected region and environment, or its `clientSecret` expired. Create a new order. |
 | `orderNotPayable` | The order was already paid, expired, or does not accept cards. |
 | Blank 3-D Secure page or `networkError` in Android release builds | Add the `INTERNET` permission to the main manifest. |
 | `networkError`: "Payriff's server certificate could not be verified." | A proxy (Charles, Burp, mitmproxy) or a network that intercepts TLS sits between the app and Payriff. The SDK's connections are pinned: turn the proxy off and use the debug logs to see the traffic. |

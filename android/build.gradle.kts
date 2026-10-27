@@ -3,7 +3,7 @@
 // removal of 3-D Secure website data (§9.1a) and the root, hooking and debugger checks
 // (§16.16). No third-party runtime dependencies.
 group = "com.payriff.flutter"
-version = "1.0.0-rc.1"
+version = "1.0.0-rc.2"
 
 buildscript {
     val kotlinVersion = "2.4.0"
