@@ -4,7 +4,7 @@ import 'package:flutter/painting.dart';
 import '../wallet/wallet_button_style.dart';
 import 'card_form_style.dart';
 
-/// The look of `PayriffPaymentView` (CONTRACT §16.14, §17.9).
+/// The look of `PayriffPaymentView` (CONTRACT §16.14, §17.9, §18).
 ///
 /// Every property is optional. The defaults reproduce the card part of
 /// Payriff's hosted payment page (pay.payriff.com) in the system font, and
@@ -35,6 +35,11 @@ final class PayriffPaymentViewStyle {
     this.buttonHeight = 44,
     this.buttonCornerRadius = 16,
     this.payButtonLabel,
+    this.payButtonTitle,
+    this.cornerSmoothing = 0,
+    this.buttonDisabledColor,
+    this.buttonDisabledTextColor,
+    this.badgeBorderColor,
     this.secondaryTextColor,
     this.showBadges = true,
     this.showSecureNote = true,
@@ -75,6 +80,41 @@ final class PayriffPaymentViewStyle {
   /// currency still follow it ("Pay now 1.00 AZN"), and it shows alone while
   /// the amount is unknown. `null`: "Pay" in the view's language.
   final String? payButtonLabel;
+
+  /// The whole text of the Pay button, in every state and every language,
+  /// without white space around it (CONTRACT §18.1). No amount or currency
+  /// is added, also while the amount is unknown; the spinner still replaces
+  /// it while paying. It wins over [payButtonLabel]. `null` or blank: the
+  /// usual title with the amount.
+  ///
+  /// The Apple Pay and Google Pay sheets and the bank's 3-D Secure page still
+  /// show the order's real amount and currency. With this title, showing the
+  /// customer what will be charged is up to you.
+  final String? payButtonTitle;
+
+  /// How smooth the corners of the Pay button and the card badges are, from
+  /// 0 (circular corners, the default) to 1 (CONTRACT §18.2): Figma's corner
+  /// smoothing, as in iOS-style continuous corners. Values outside 0…1 are
+  /// clamped. It is also the card form's when [formStyle] sets no
+  /// `cornerSmoothing`. The wallet buttons keep their own shape.
+  final double cornerSmoothing;
+
+  /// The fill of the disabled Pay button (CONTRACT §18.3). When it or
+  /// [buttonDisabledTextColor] is set, the disabled button is drawn in these
+  /// colours at full opacity: this fill, else [buttonColor]. `null` with
+  /// [buttonDisabledTextColor] also `null`: the enabled colours at 50%
+  /// opacity.
+  final Color? buttonDisabledColor;
+
+  /// The text and spinner colour of the disabled Pay button (CONTRACT
+  /// §18.3), else the enabled text colour. See [buttonDisabledColor].
+  final Color? buttonDisabledTextColor;
+
+  /// The border of the Mastercard and Visa badges under the Pay button
+  /// (CONTRACT §18.4). In the view it also colours the border of the brand
+  /// mark in the card number field, unless `formStyle.brandMarkBorderColor`
+  /// is set. `null`: `#ECEEF0`.
+  final Color? badgeBorderColor;
 
   /// The colour of the secure line and the "Powered by" footer. `null`:
   /// `#76787F`.
@@ -135,6 +175,11 @@ final class PayriffPaymentViewStyle {
     double? buttonHeight,
     double? buttonCornerRadius,
     String? payButtonLabel,
+    String? payButtonTitle,
+    double? cornerSmoothing,
+    Color? buttonDisabledColor,
+    Color? buttonDisabledTextColor,
+    Color? badgeBorderColor,
     Color? secondaryTextColor,
     bool? showBadges,
     bool? showSecureNote,
@@ -153,6 +198,12 @@ final class PayriffPaymentViewStyle {
     buttonHeight: buttonHeight ?? this.buttonHeight,
     buttonCornerRadius: buttonCornerRadius ?? this.buttonCornerRadius,
     payButtonLabel: payButtonLabel ?? this.payButtonLabel,
+    payButtonTitle: payButtonTitle ?? this.payButtonTitle,
+    cornerSmoothing: cornerSmoothing ?? this.cornerSmoothing,
+    buttonDisabledColor: buttonDisabledColor ?? this.buttonDisabledColor,
+    buttonDisabledTextColor:
+        buttonDisabledTextColor ?? this.buttonDisabledTextColor,
+    badgeBorderColor: badgeBorderColor ?? this.badgeBorderColor,
     secondaryTextColor: secondaryTextColor ?? this.secondaryTextColor,
     showBadges: showBadges ?? this.showBadges,
     showSecureNote: showSecureNote ?? this.showSecureNote,
@@ -175,6 +226,11 @@ final class PayriffPaymentViewStyle {
       other.buttonHeight == buttonHeight &&
       other.buttonCornerRadius == buttonCornerRadius &&
       other.payButtonLabel == payButtonLabel &&
+      other.payButtonTitle == payButtonTitle &&
+      other.cornerSmoothing == cornerSmoothing &&
+      other.buttonDisabledColor == buttonDisabledColor &&
+      other.buttonDisabledTextColor == buttonDisabledTextColor &&
+      other.badgeBorderColor == badgeBorderColor &&
       other.secondaryTextColor == secondaryTextColor &&
       other.showBadges == showBadges &&
       other.showSecureNote == showSecureNote &&
@@ -187,7 +243,7 @@ final class PayriffPaymentViewStyle {
       other.showWalletDivider == showWalletDivider;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
     backgroundColor,
     padding,
     buttonColor,
@@ -195,6 +251,11 @@ final class PayriffPaymentViewStyle {
     buttonHeight,
     buttonCornerRadius,
     payButtonLabel,
+    payButtonTitle,
+    cornerSmoothing,
+    buttonDisabledColor,
+    buttonDisabledTextColor,
+    badgeBorderColor,
     secondaryTextColor,
     showBadges,
     showSecureNote,
@@ -205,5 +266,5 @@ final class PayriffPaymentViewStyle {
     googlePayButton,
     walletDividerText,
     showWalletDivider,
-  );
+  ]);
 }

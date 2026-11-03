@@ -24,6 +24,24 @@ import 'internal/ui/three_ds_presentation.dart';
 import 'internal/wallet/wallet_rules.dart';
 import 'log.dart';
 import 'result.dart';
+import 'strings.dart';
+
+/// [Payriff.confirmCardPayment] with the texts of `PayriffPaymentView.strings`
+/// ([viewStrings]) over `PayriffConfig.strings` in the 3-D Secure sheet
+/// (CONTRACT §18.6). Internal to the SDK: the payment view pays through it.
+Future<PayriffResult> confirmCardPaymentWithStrings(
+  BuildContext context,
+  PayriffCardController controller, {
+  required String orderId,
+  required String clientSecret,
+  PayriffStrings? viewStrings,
+}) => Payriff._confirmCardPayment(
+  context,
+  controller,
+  orderId: orderId,
+  clientSecret: clientSecret,
+  viewStrings: viewStrings,
+);
 
 /// The Payriff SDK entry point.
 ///
@@ -56,7 +74,7 @@ import 'result.dart';
 /// ```
 abstract final class Payriff {
   /// The version of this package.
-  static const String version = '1.0.0-rc.3';
+  static const String version = '1.0.0-rc.4';
 
   static PayriffConfig? _config;
 
@@ -160,6 +178,9 @@ abstract final class Payriff {
   /// [PayriffResultPending] unless it is final. The card values are cleared
   /// after a final result. Never throws.
   ///
+  /// The 3-D Secure sheet shows the texts of `PayriffConfig.strings`, and is
+  /// laid out right to left in a right-to-left app and in Arabic.
+  ///
   /// The result is for the user interface: fulfil the order on your server
   /// after it confirms the payment with Payriff.
   static Future<PayriffResult> confirmCardPayment(
@@ -167,6 +188,19 @@ abstract final class Payriff {
     PayriffCardController controller, {
     required String orderId,
     required String clientSecret,
+  }) => _confirmCardPayment(
+    context,
+    controller,
+    orderId: orderId,
+    clientSecret: clientSecret,
+  );
+
+  static Future<PayriffResult> _confirmCardPayment(
+    BuildContext context,
+    PayriffCardController controller, {
+    required String orderId,
+    required String clientSecret,
+    PayriffStrings? viewStrings,
   }) async {
     if (isPaymentInProgress) {
       return const PayriffResultFailed(error: paymentInProgressError);
@@ -221,8 +255,10 @@ abstract final class Payriff {
     }
 
     final SdkLogger logger = _loggerFor(config);
-    final PayriffStrings strings = PayriffStrings(
-      config.language ?? deviceLanguage(),
+    // CONTRACT §18.6: the payment view's texts, then the config's.
+    final PayriffSheetStrings strings = PayriffSheetStrings(
+      effectiveLanguage(null, config),
+      overrides: <PayriffStrings>[?viewStrings, ?config.strings],
     );
     final bool material = context.mounted
         ? SheetPresenter.prefersMaterial(context)
@@ -355,6 +391,13 @@ abstract final class Payriff {
   /// refused too.
   static Future<bool> isDeviceCompromised() async =>
       (await deviceIntegrityReport()).compromised;
+
+  /// Whether this device can run the SDK's payments (CONTRACT §18.8): `true`
+  /// on iOS 16 or later and on Android 7.0 (API 24) or later, `false` on
+  /// any other platform or version, and when the plugin's native part is
+  /// missing. Ask it early, for example to offer another way to pay. It
+  /// needs no [configure] and never throws.
+  static Future<bool> isSupported() => NativeBridge.isSupported();
 
   /// Clears the configuration and the in-progress guard. For tests only.
   @visibleForTesting

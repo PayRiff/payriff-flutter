@@ -11,6 +11,10 @@
 /// [PayriffApplePayButton] or [PayriffGooglePayButton]. The secret key never
 /// ships in the app.
 ///
+/// [PayriffPaymentViewStyle] and [PayriffStrings] adapt the screens to your
+/// app's design and languages, and [Payriff.isSupported] tells whether the
+/// device can pay.
+///
 /// The result in the app is for the user interface. Fulfil orders on your
 /// server, after it confirms them with Payriff.
 library;
@@ -42,6 +46,7 @@ export 'src/config.dart'
         PayriffRegion;
 export 'src/error.dart' show PayriffError, PayriffErrorCode, PayriffException;
 export 'src/log.dart' show PayriffLogEntry, PayriffLogLevel;
+export 'src/payment_method.dart' show PayriffPaymentMethod;
 export 'src/payriff.dart' show Payriff;
 export 'src/result.dart'
     show
@@ -55,6 +60,7 @@ export 'src/result.dart'
         PayriffResultPending,
         PayriffResultSuccess;
 export 'src/status.dart' show PayriffPaymentStatus;
+export 'src/strings.dart' show PayriffStrings;
 export 'src/wallet/wallet_button_style.dart'
     show
         PayriffApplePayButtonStyle,

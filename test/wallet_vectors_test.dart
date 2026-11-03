@@ -273,6 +273,14 @@ void main() {
     expect(applePayCapabilities, <String>['threeDSecure']);
   });
 
+  test('applePayNetworks: region sa adds mada (CONTRACT §19.4)', () {
+    final Map<String, Object?> networks =
+        _v['applePayNetworks']! as Map<String, Object?>;
+    for (final PayriffRegion region in PayriffRegion.values) {
+      expect(applePayNetworksFor(region), networks[region.name]);
+    }
+  });
+
   group('payRequests', () {
     for (final Map<String, Object?> c in _list(_v['payRequests'])) {
       test(

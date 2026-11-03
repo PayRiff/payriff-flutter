@@ -15,7 +15,7 @@ ThreeDsSheet? presentThreeDsSheet(
   BuildContext context,
   NavigatorState navigator,
   bool material,
-  PayriffStrings strings,
+  PayriffSheetStrings strings,
   SdkLogger logger,
   ThreeDsSession session,
 ) {

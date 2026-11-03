@@ -335,6 +335,95 @@ void main() {
         'creq=a+b%2B%2F%3D&x=',
       );
     });
+
+    // Revision 9 (CONTRACT §19.1): the 3-D Secure Method step.
+    final Map<String, Object?> v = _load('card_next_action.json');
+    for (final Map<String, Object?> c in _list(v['methodSteps'])) {
+      test('methodSteps: ${c['name']}', () {
+        final Map<String, Object?> values =
+            c['clientRequest']! as Map<String, Object?>;
+        final NextAction action = classifyNextAction(<String, Object?>{
+          'nextAction': 'THREE_DS',
+          'clientRequest': <Object?>[
+            for (final MapEntry<String, Object?> e in values.entries)
+              <String, Object?>{'key': e.key, 'value': e.value},
+          ],
+        });
+        final List<ThreeDsRequest> hidden = threeDsMethodRequests(
+          action as MethodAction,
+        );
+        final Map<String, Object?> expected =
+            c['expect']! as Map<String, Object?>;
+        final String? issuer = values['threeDSMethodUrl'] as String?;
+        final String? server = values['threeDSMethodUrlServer'] as String?;
+        expect(<String, Object?>{
+          'issuer': hidden.any(
+            (ThreeDsRequest r) => r.url.toString() == issuer,
+          ),
+          'server': hidden.any(
+            (ThreeDsRequest r) => r.url.toString() == server,
+          ),
+        }, expected);
+        expect(
+          hidden,
+          hasLength(expected.values.where((Object? b) => b == true).length),
+        );
+        for (final ThreeDsRequest r in hidden) {
+          expect(r.isPost, isTrue);
+          expect(
+            utf8.decode(r.body!),
+            r.url.toString() == issuer
+                ? 'threeDSMethodData=${values['threeDSMethodData']}'
+                : '',
+          );
+        }
+      });
+    }
+
+    test('threeDsTiming', () {
+      final Map<String, Object?> t =
+          v['threeDsTiming']! as Map<String, Object?>;
+      expect(threeDsMethodLoadTimeout.inSeconds, t['methodLoadTimeoutSeconds']);
+      expect(
+        threeDsRequestTimeout.inSeconds,
+        t['threeDsRequestTimeoutSeconds'],
+      );
+      expect(threeDsRetries, t['threeDsRetries']);
+      expect(threeDsWaitInterval.inSeconds, t['waitIntervalSeconds']);
+      expect(threeDsWaitLimit.inSeconds, t['waitLimitSeconds']);
+    });
+
+    for (final Map<String, Object?> c in _list(v['afterMethod'])) {
+      test('afterMethod: ${c['result']} -> ${c['then']}', () {
+        final NextAction? last = switch (c['result']) {
+          'challenge' => classifyNextAction(<String, Object?>{
+            'nextAction': 'THREE_DS',
+            'accessUrl': 'https://acs.bank.example/challenge',
+          }),
+          'redirect' => classifyNextAction(<String, Object?>{
+            'nextAction': 'REDIRECT',
+            'redirectUrl': 'https://bank.example/r',
+          }),
+          'challengeWithoutAccessUrl' || 'method' => classifyNextAction(
+            <String, Object?>{'nextAction': 'THREE_DS'},
+          ),
+          'checkStatus' => classifyNextAction(<String, Object?>{
+            'nextAction': 'CHECK_STATUS',
+          }),
+          // The wait loop ends on a `wait` once the 30 s are over.
+          'waitAfterLimit' => classifyNextAction(<String, Object?>{
+            'nextAction': 'WAIT',
+          }),
+          'invalid' => classifyNextAction(<String, Object?>{
+            'nextAction': 'FOO',
+          }),
+          // No answer after the retry.
+          'errorAfterRetry' => null,
+          _ => throw StateError('unknown result ${c['result']}'),
+        };
+        expect(afterThreeDsMethod(last).name, c['then']);
+      });
+    }
   });
 
   group('card_3ds_navigation.json', () {

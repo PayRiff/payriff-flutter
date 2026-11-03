@@ -12,8 +12,10 @@ it is built on.
   web. The SDK never creates orders.
 - **Ready-made payment view**: looks like the card part of Payriff's hosted
   payment page (pay.payriff.com) by default and can be restyled; validation
-  and formatting as the customer types, Visa and Mastercard marks,
-  Azerbaijani, English and Russian copy, light and dark mode.
+  and formatting as the customer types, Visa, Mastercard and mada marks,
+  Azerbaijani, English, Russian and Arabic copy, light and dark mode, and
+  right-to-left layouts. Your own texts, corner smoothing and colours fit it
+  to your app's design (see [Customising](#customising)).
 - **Apple Pay and Google Pay**: the official wallet button above the card
   form (Apple Pay on iOS, Google Pay on Android), or on its own for a screen
   of yours (see [Apple Pay and Google Pay](#apple-pay-and-google-pay)).
@@ -49,7 +51,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.3`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.4`).
 
 Then complete the [platform setup](#platform-setup).
 
@@ -253,9 +255,80 @@ PayriffPaymentView(
 | `secureNoteText` | `null`: "Proceed securely by PCI DSS" in the view's language. Your text shows as it is in every language |
 | `showPoweredBy` | `true`: the "Powered by Payriff" footer; in dark mode the logo's wordmark is light (`#E1E4E8`) |
 | `formStyle` | `PayriffCardFormStyle()`, see [Customise the card form](#customise-the-card-form) |
+| `payButtonTitle` | `null`. The whole Pay button text, see [Customising](#customising) |
+| `cornerSmoothing` | `0` (circular corners), up to `1` |
+| `buttonDisabledColor`, `buttonDisabledTextColor` | `null`: a disabled Pay button is the enabled one at 50% opacity |
+| `badgeBorderColor` | `null`: `#ECEEF0` |
 
 The view follows your app's theme brightness (`Theme`, or `CupertinoTheme`
 in a `CupertinoApp`) for light and dark mode.
+
+### Customising
+
+Every option below is off by default; without them the view and the form
+look exactly as above.
+
+```dart
+PayriffPaymentView(
+  orderId: order.orderId,
+  clientSecret: order.clientSecret,
+  strings: PayriffStrings(pay: l10n.pay, sheetTitle: l10n.payment),
+  onPaymentStarted: (PayriffPaymentMethod method) => analytics.log(method.value),
+  onOrderLoaded: (PayriffClientOrder order) => showTotal(order.amount),
+  onLoadFailed: (PayriffError error) => offerAnotherWayToPay(),
+  onResult: handleResult,
+  style: const PayriffPaymentViewStyle(
+    payButtonTitle: 'Complete purchase',
+    cornerSmoothing: 0.6,
+    buttonDisabledColor: Color(0xFFE4E4E7),
+    buttonDisabledTextColor: Color(0xFF71717A),
+    badgeBorderColor: Color(0xFFE4E4E7),
+  ),
+)
+```
+
+- **`payButtonTitle`** is the Pay button's whole text, in every state and
+  language; the amount and currency are not added (the spinner still shows
+  while paying). It wins over `payButtonLabel`. **The Apple Pay and Google
+  Pay sheets and the bank's 3-D Secure page show the real amount, but the
+  Pay button no longer does: show the customer what will be charged on your
+  screen.**
+- **`cornerSmoothing`** (0 to 1) gives the fields, the card box, the brand
+  mark, the Pay button and the badges Figma-style smooth corners, like iOS
+  continuous corners. `PayriffCardFormStyle.cornerSmoothing` sets the form's
+  own; `null` takes the view's. The Apple Pay and Google Pay buttons keep
+  their own shape.
+- **`buttonDisabledColor` and `buttonDisabledTextColor`** draw a disabled Pay
+  button in these colours at full opacity instead of at 50%.
+- **`badgeBorderColor`** colours the frames of the Mastercard and Visa
+  badges and, in the view, the border of the brand mark in the number field.
+  `PayriffCardFormStyle.brandMarkBorderColor` sets the mark's own (default
+  `#D1D1D6`).
+- **`PayriffStrings`** replaces any text of the card form, the payment view
+  and the 3-D Secure sheet: labels, placeholders, field errors, the view's
+  copy and the sheet's title, buttons and messages. Set it app-wide with
+  `PayriffConfig.strings`, or per view with `PayriffPaymentView.strings`,
+  which wins field by field. A `null` or blank field keeps the SDK's text in
+  the current language. `errorMessages` maps a `PayriffErrorCode` to the
+  text of an on-screen error line: the view's error line, and, when their
+  own field is not set, the device line (`deviceCompromised`), the
+  not-payable line (`orderNotPayable`) and the 3-D Secure page-load error
+  (`networkError`). `PayriffError.message` in the result stays English. Use
+  it for languages the SDK does not have.
+- **Right to left:** in an app with a right-to-left `Directionality`, and
+  in Arabic (`PayriffLanguage.ar`), the view, the form and the 3-D Secure
+  sheet are laid out right to left: the rows mirror and the brand mark moves
+  to the trailing side. The card number, expiry and CVC are always typed
+  left to right.
+- **Callbacks:** `onPaymentStarted` runs once per payment attempt, when Pay
+  is tapped with a complete form (before anything is sent) or when the
+  Apple Pay or Google Pay button is tapped (before its sheet opens).
+  `onOrderLoaded` runs after every read of the order, also when it cannot
+  be paid by card. `onLoadFailed` runs when the view gets no order: the
+  order could not be read, or the device is compromised. Fatal errors still
+  go to `onResult` once.
+- **`Payriff.isSupported()`** completes with `true` on iOS 16+ and Android
+  7.0+ and `false` elsewhere, so you can offer another way to pay early.
 
 ## Apple Pay and Google Pay
 
@@ -312,7 +385,8 @@ Payriff.configure(const PayriffConfig(
   is set, the device is not compromised, the order is `CREATED` or
   `PENDING` and lists `APPLE_PAY` or `GOOGLE_PAY` in `paymentMethods`
   (Google Pay also needs the order's gateway parameters), and the device can
-  pay (Apple Pay with Visa or Mastercard; Google Pay's `isReadyToPay`).
+  pay (Apple Pay with Visa or Mastercard, and mada in region `sa`; Google
+  Pay's `isReadyToPay`).
   Until then the view looks exactly as without wallets. With
   `enableLogging`, a `debug` line says why: `Apple Pay offered: false (…)`.
 - Closing the wallet's sheet without paying reports nothing: the customer
@@ -452,14 +526,16 @@ PayriffCardForm(
   CVC side by side below it. Each section has one error line; under the box
   it shows the first error of the number, the expiry and the CVC.
 
-- Validation and formatting follow Payriff.js: Visa and Mastercard, at most
+- Validation and formatting follow Payriff.js: Visa, Mastercard and mada
+  (Saudi debit: recognised once its 6- or 8-digit BIN is typed, so a card
+  that is also Visa or Mastercard shows that brand until then), at most
   16 digits, Luhn, an expiry that is not in the past and at most 20 years
   ahead, a 3-digit CVV, and a holder name of at most 50 characters without
   control characters or `<` / `>`. The holder name is always shown and sent
   in upper case.
 - Errors appear when they help: definite errors at once, an incomplete field
   after it loses focus or after Pay, an empty required field only after Pay.
-- The brand shows as the Visa or Mastercard mark inside the number field as
+- The brand shows as the Visa, Mastercard or mada mark inside the number field as
   soon as the first digits identify it.
 - `onChanged` reports `{field, valid, empty, error, brand, complete}`. No
   event or API exposes the card number, expiry, CVV or holder name.
@@ -562,11 +638,12 @@ configuration applies to later calls.
 | `publishableKey` | `null` | Your application's publishable key (`pr_pk_live_…`), sent as `X-Public-Key`. Safe to ship: it only works with an order's `clientSecret`. A missing key, or any other kind of key (for example the secret key), makes the card calls fail with `invalidConfig`. |
 | `environment` | `production` | `PayriffEnvironment.production` or `sandbox`. With `region`, it picks the API host (see [Regions](#regions)). `sandbox` is region `az`'s sandbox, `https://sb-api.payriff.com`; that host is provisional until Payriff confirms it. Region `sa` has no sandbox. |
 | `region` | `az` | `PayriffRegion.az` (`https://api.payriff.com`) or `PayriffRegion.sa` (Saudi Arabia, GCC Pay, `https://api.gccpay.sa`). See [Regions](#regions). |
-| `language` | `null` | `PayriffLanguage.az`, `en` or `ru` for the form and the 3-D Secure sheet. `null` uses the device language (Azerbaijani, Russian, otherwise English). |
+| `language` | `null` | `PayriffLanguage.az`, `en`, `ru` or `ar` for the form, the payment view and the 3-D Secure sheet; Arabic is laid out right to left. `null` uses the device language (Azerbaijani, Russian, Arabic or English; any other language gives English in region `az` and Arabic in region `sa`). |
 | `enableLogging` | `false` | See [Logging](#logging). |
 | `allowCompromisedDevices` | `false` | In debug builds (`kDebugMode`), `true` lets card payments run on a rooted or jailbroken device or with a hooking tool, and only logs a warning that names what was found. Profile and release builds ignore it with a warning and refuse such devices, so a flag left on never reaches the app you ship. For development on test devices. See [Security](#security). |
 | `applePay` | `null` | `PayriffApplePayConfig`: Apple Pay on iOS. See [Apple Pay and Google Pay](#apple-pay-and-google-pay). |
 | `googlePay` | `null` | `PayriffGooglePayConfig`: Google Pay on Android. See [Apple Pay and Google Pay](#apple-pay-and-google-pay). |
+| `strings` | `null` | `PayriffStrings`: your own texts for every screen of the SDK. See [Customising](#customising). |
 
 ### Regions
 

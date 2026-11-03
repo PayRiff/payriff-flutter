@@ -166,9 +166,11 @@ void main() {
   group('images and dark mode (CONTRACT §16.14)', () {
     test('every image ships at 1x, 2.0x and 3.0x in its size, and the '
         'folder holds no other image', () {
+      // CONTRACT §18.4: the badges ship as frameless marks on the canvas of
+      // the old framed images; the view draws the frames.
       const Map<String, Size> sizes = <String, Size>{
-        PaymentViewAssets.mastercard: Size(43, 28),
-        PaymentViewAssets.visa: Size(42, 28),
+        PaymentViewAssets.mastercardMark: Size(43, 28),
+        PaymentViewAssets.visaMark: Size(42, 28),
         PaymentViewAssets.logo: Size(82, 16),
         PaymentViewAssets.logoDark: Size(82, 16),
       };

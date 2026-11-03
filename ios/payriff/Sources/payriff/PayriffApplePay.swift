@@ -9,6 +9,7 @@ enum PayriffApplePayRequest {
   static func networks(_ names: [String]) -> [PKPaymentNetwork] {
     names.compactMap { name in
       switch name {
+      case "mada": return .mada
       case "visa": return .visa
       case "masterCard": return .masterCard
       default: return nil

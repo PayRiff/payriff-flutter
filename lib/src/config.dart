@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'strings.dart';
+
 /// The Payriff environment the SDK talks to. Together with [PayriffRegion]
 /// it picks the API host, [PayriffConfig.apiBaseUrl].
 enum PayriffEnvironment {
@@ -30,7 +32,9 @@ enum PayriffRegion {
   sa,
 }
 
-/// Languages of the SDK's card form and 3-D Secure sheet.
+/// Languages of the SDK's card form, payment view and 3-D Secure sheet.
+///
+/// For any other language, pass your own texts in `PayriffStrings`.
 enum PayriffLanguage {
   /// Azerbaijani.
   az('AZ'),
@@ -39,7 +43,11 @@ enum PayriffLanguage {
   en('EN'),
 
   /// Russian.
-  ru('RU');
+  ru('RU'),
+
+  /// Arabic (CONTRACT §19.3). The SDK's screens are laid out right to left
+  /// in it; the card number, expiry and CVC stay left to right.
+  ar('AR');
 
   const PayriffLanguage(this.value);
 
@@ -148,6 +156,7 @@ final class PayriffConfig {
     this.allowCompromisedDevices = false,
     this.applePay,
     this.googlePay,
+    this.strings,
   });
 
   /// The publishable key (`pr_pk_live_…`) of your Payriff application, sent
@@ -168,8 +177,10 @@ final class PayriffConfig {
   /// payments go to production and charge real cards.
   final PayriffRegion region;
 
-  /// The language of the card form and of the 3-D Secure sheet. `null` uses
-  /// the device language (Azerbaijani, Russian, otherwise English).
+  /// The language of the card form, the payment view and the 3-D Secure
+  /// sheet. `null` uses the device language: Azerbaijani, Russian, Arabic
+  /// or English, and for any other device language English in
+  /// [PayriffRegion.az] and Arabic in [PayriffRegion.sa].
   final PayriffLanguage? language;
 
   /// Whether the SDK emits log entries to `Payriff.logStream` and, in debug
@@ -211,6 +222,13 @@ final class PayriffConfig {
   /// [PayriffEnvironment.sandbox] in region [PayriffRegion.az] uses Google
   /// Pay's `TEST` environment; everything else uses `PRODUCTION`.
   final PayriffGooglePayConfig? googlePay;
+
+  /// Texts of your own for every screen of the SDK (CONTRACT §18.6): the
+  /// card form, the payment view and the 3-D Secure sheet, including the
+  /// one `Payriff.confirmCardPayment` opens. `null` (the default) keeps the
+  /// SDK's texts. A `PayriffPaymentView.strings` field wins over the same
+  /// field here.
+  final PayriffStrings? strings;
 
   /// The Client API base URL of [region] and [environment] (CONTRACT
   /// §16.2), without a trailing slash. Every card call, the 3-D Secure

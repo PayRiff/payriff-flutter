@@ -1,18 +1,34 @@
 import 'package:flutter/widgets.dart';
 
+import '../internal/ui/smooth_rect.dart';
 import 'card_types.dart';
+
+/// The default border of the brand mark's badge (CONTRACT §16.4, §18.4).
+const Color cardBrandMarkBorderColor = Color(0xFFD1D1D6);
 
 /// The card brand's mark on a white badge, or a neutral card
 /// outline while the brand is unknown (CONTRACT §16.4).
 class CardBrandMark extends StatelessWidget {
   /// Creates the mark for [brand]; [outline] colours the unknown state.
-  const CardBrandMark({super.key, required this.brand, required this.outline});
+  const CardBrandMark({
+    super.key,
+    required this.brand,
+    required this.outline,
+    this.borderColor = cardBrandMarkBorderColor,
+    this.cornerSmoothing = 0,
+  });
 
   /// The detected brand, or `null`.
   final PayriffCardBrand? brand;
 
   /// The colour of the neutral outline.
   final Color outline;
+
+  /// The border of the badge (CONTRACT §18.4).
+  final Color borderColor;
+
+  /// The badge's corner smoothing (CONTRACT §18.2).
+  final double cornerSmoothing;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -21,13 +37,23 @@ class CardBrandMark extends StatelessWidget {
     child: AnimatedSwitcher(
       duration: const Duration(milliseconds: 150),
       child: switch (brand) {
-        PayriffCardBrand.visa => const _Badge(
-          key: ValueKey<String>('visa'),
-          painter: _VisaPainter(),
+        PayriffCardBrand.visa => _Badge(
+          key: const ValueKey<String>('visa'),
+          painter: const _VisaPainter(),
+          borderColor: borderColor,
+          cornerSmoothing: cornerSmoothing,
         ),
-        PayriffCardBrand.mastercard => const _Badge(
-          key: ValueKey<String>('mastercard'),
-          painter: _MastercardPainter(),
+        PayriffCardBrand.mastercard => _Badge(
+          key: const ValueKey<String>('mastercard'),
+          painter: const _MastercardPainter(),
+          borderColor: borderColor,
+          cornerSmoothing: cornerSmoothing,
+        ),
+        PayriffCardBrand.mada => _Badge(
+          key: const ValueKey<String>('mada'),
+          painter: const _MadaPainter(),
+          borderColor: borderColor,
+          cornerSmoothing: cornerSmoothing,
         ),
         null => CustomPaint(
           key: const ValueKey<String>('unknown'),
@@ -40,16 +66,24 @@ class CardBrandMark extends StatelessWidget {
 }
 
 class _Badge extends StatelessWidget {
-  const _Badge({super.key, required this.painter});
+  const _Badge({
+    super.key,
+    required this.painter,
+    required this.borderColor,
+    required this.cornerSmoothing,
+  });
 
   final CustomPainter painter;
+  final Color borderColor;
+  final double cornerSmoothing;
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
+    decoration: roundedRectDecoration(
       color: const Color(0xFFFFFFFF),
-      borderRadius: BorderRadius.circular(4),
-      border: Border.all(color: const Color(0xFFD1D1D6)),
+      side: BorderSide(color: borderColor),
+      radius: 4,
+      smoothing: cornerSmoothing,
     ),
     child: CustomPaint(size: const Size(36, 24), painter: painter),
   );
@@ -162,6 +196,61 @@ class _MastercardPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MastercardPainter oldDelegate) => false;
+}
+
+/// The mada mark of Payriff.js 1.3.1 (CONTRACT §19.2): its 32×20 drawing
+/// centred at 1:1 in the 36×24 badge, without its own frame. A blue and a
+/// green bar, then "mada" in the platform's bold sans-serif.
+class _MadaPainter extends CustomPainter {
+  const _MadaPainter();
+
+  /// The drawing's box.
+  static const Size _box = Size(32, 20);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Offset origin = Offset(
+      (size.width - _box.width) / 2,
+      (size.height - _box.height) / 2,
+    );
+    canvas
+      ..drawRect(
+        Rect.fromLTWH(origin.dx + 3, origin.dy + 7, 5, 2.5),
+        Paint()..color = const Color(0xFF259BD6),
+      )
+      ..drawRect(
+        Rect.fromLTWH(origin.dx + 3, origin.dy + 10.5, 5, 2.5),
+        Paint()..color = const Color(0xFF84B740),
+      );
+    final TextPainter text = TextPainter(
+      text: const TextSpan(
+        text: 'mada',
+        style: TextStyle(
+          color: Color(0xFF1F2A44),
+          fontSize: 8.5,
+          fontWeight: FontWeight.w700,
+          height: 1,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final double baseline = text.computeDistanceToActualBaseline(
+      TextBaseline.alphabetic,
+    );
+    // Centred at x 19.5, its baseline at y 13.5 of the drawing.
+    text.paint(
+      canvas,
+      Offset(
+        origin.dx + 19.5 - text.width / 2,
+        origin.dy + 13.5 - baseline,
+      ),
+    );
+    text.dispose();
+  }
+
+  @override
+  bool shouldRepaint(_MadaPainter oldDelegate) => false;
 }
 
 class _OutlinePainter extends CustomPainter {

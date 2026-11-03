@@ -15,6 +15,7 @@ import '../../config.dart';
 import '../../error.dart';
 import '../../payriff.dart';
 import '../../result.dart';
+import '../../strings.dart';
 import '../card/card_clock.dart';
 import '../card/card_flow.dart';
 import '../card/client_api.dart';
@@ -61,7 +62,8 @@ Future<String?> _walletProblem(
   switch (kind) {
     case WalletKind.applePay:
       final bool canPay = await NativeBridge.applePayCanMakePayments(
-        networks: applePayNetworks,
+        // CONTRACT §19.4: mada too in region sa.
+        networks: applePayNetworksFor(config.region),
         capabilities: applePayCapabilities,
       );
       return canPay ? null : 'the device cannot pay with Visa or Mastercard';
@@ -79,13 +81,16 @@ Future<String?> _walletProblem(
 /// customer closed the wallet's sheet without paying (§17.8: the payment
 /// view reports nothing, a standalone button reports
 /// `cancelled(userClosed)`). One payment at a time: while another one runs,
-/// the result is `failed(PAYMENT_IN_PROGRESS)`. Never throws.
+/// the result is `failed(PAYMENT_IN_PROGRESS)`. The 3-D Secure sheet shows
+/// [viewStrings] (`PayriffPaymentView.strings`) over `PayriffConfig.strings`
+/// (CONTRACT §18.6). Never throws.
 Future<PayriffResult?> payWithWallet(
   BuildContext context, {
   required WalletKind kind,
   required PayriffClientOrder order,
   required String orderId,
   required String clientSecret,
+  PayriffStrings? viewStrings,
 }) async {
   if (paymentInProgress) {
     return const PayriffResultFailed(error: paymentInProgressError);
@@ -121,8 +126,9 @@ Future<PayriffResult?> payWithWallet(
     return const PayriffResultFailed(error: noNavigatorError);
   }
   final SdkLogger logger = sdkLoggerFor(config);
-  final PayriffStrings strings = PayriffStrings(
-    config.language ?? deviceLanguage(),
+  final PayriffSheetStrings strings = PayriffSheetStrings(
+    effectiveLanguage(null, config),
+    overrides: <PayriffStrings>[?viewStrings, ?config.strings],
   );
   final bool material = context.mounted
       ? SheetPresenter.prefersMaterial(context)
@@ -194,7 +200,7 @@ final class _WalletPayment {
   final String orderId;
   final String publishableKey;
   final String clientSecret;
-  final PayriffStrings strings;
+  final PayriffSheetStrings strings;
   final SdkLogger logger;
   final ThreeDsSheetOpener openSheet;
   ClientApi? _api;

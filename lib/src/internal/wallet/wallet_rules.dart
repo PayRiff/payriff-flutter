@@ -63,8 +63,17 @@ WalletKind? get platformWallet => switch (defaultTargetPlatform) {
 const Duration applePaySheetBudget = Duration(seconds: 20);
 
 /// The Visa and Mastercard networks of the Apple Pay request and of
-/// `canMakePayments` (CONTRACT §17.4), as `PKPaymentNetwork` names.
+/// `canMakePayments` (CONTRACT §17.4), as `PKPaymentNetwork` names: region
+/// [PayriffRegion.az]'s.
 const List<String> applePayNetworks = <String>['visa', 'masterCard'];
+
+/// The Apple Pay networks of [region] (CONTRACT §19.4, `wallet.json` →
+/// `applePayNetworks`): [PayriffRegion.sa] adds mada, which needs the
+/// country code `SA` that the region sets.
+List<String> applePayNetworksFor(PayriffRegion region) => switch (region) {
+  PayriffRegion.az => applePayNetworks,
+  PayriffRegion.sa => const <String>['mada', 'visa', 'masterCard'],
+};
 
 /// The merchant capabilities of the Apple Pay request and of
 /// `canMakePayments`, as `PKMerchantCapability` names.
@@ -280,7 +289,7 @@ Map<String, Object?>? applePayRequest({
     'merchantIdentifier': merchantIdentifier,
     'countryCode': walletCountryCode(region),
     'currencyCode': currency,
-    'supportedNetworks': applePayNetworks,
+    'supportedNetworks': applePayNetworksFor(region),
     'merchantCapabilities': applePayCapabilities,
     'summaryItems': <Object?>[
       <String, Object?>{

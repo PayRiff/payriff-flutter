@@ -222,30 +222,37 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
       material: widget.presenter.material,
     );
     final bool android = defaultTargetPlatform == TargetPlatform.android;
-    return PopScope<Object?>(
-      canPop: false,
-      onPopInvokedWithResult: (bool didPop, Object? result) {
-        if (!didPop) unawaited(_session.requestClose());
-      },
-      child: Transform.translate(
-        offset: Offset(0, _dragOffset),
-        child: _SheetClip(
-          material: style.material,
-          roundBottom: MediaQuery.viewPaddingOf(context).bottom > 0,
-          child: ColoredBox(
-            color: style.background,
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  bottom: android ? MediaQuery.viewInsetsOf(context).bottom : 0,
-                ),
-                child: DefaultTextStyle(
-                  style: style.body,
-                  child: ListenableBuilder(
-                    listenable: _session,
-                    builder: (BuildContext context, Widget? child) =>
-                        _buildContent(style),
+    // CONTRACT §19.3: the chrome is right to left in a right-to-left app and
+    // in Arabic; the bank page is the bank's.
+    return Directionality(
+      textDirection: viewTextDirection(context, _session.strings.language),
+      child: PopScope<Object?>(
+        canPop: false,
+        onPopInvokedWithResult: (bool didPop, Object? result) {
+          if (!didPop) unawaited(_session.requestClose());
+        },
+        child: Transform.translate(
+          offset: Offset(0, _dragOffset),
+          child: _SheetClip(
+            material: style.material,
+            roundBottom: MediaQuery.viewPaddingOf(context).bottom > 0,
+            child: ColoredBox(
+              color: style.background,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    bottom: android
+                        ? MediaQuery.viewInsetsOf(context).bottom
+                        : 0,
+                  ),
+                  child: DefaultTextStyle(
+                    style: style.body,
+                    child: ListenableBuilder(
+                      listenable: _session,
+                      builder: (BuildContext context, Widget? child) =>
+                          _buildContent(style),
+                    ),
                   ),
                 ),
               ),
@@ -258,8 +265,9 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
 
   Widget _buildContent(SheetStyle style) {
     final ThreeDsSession session = _session;
-    final PayriffStrings strings = session.strings;
+    final PayriffSheetStrings strings = session.strings;
     final Widget? overlay = _overlay(style, strings);
+    final int hiddenGeneration = session.hiddenGeneration;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -289,7 +297,7 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
                   in session.hidden.indexed)
                 Positioned(
                   key: ValueKey<String>(
-                    'payriff.3ds.hidden.${session.hiddenGeneration}.$i',
+                    'payriff.3ds.hidden.$hiddenGeneration.$i',
                   ),
                   left: 0,
                   top: 0,
@@ -302,6 +310,8 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
                         apiBaseUrl: session.apiBaseUrl,
                         websiteData: session.websiteData,
                         logger: widget.logger,
+                        onFirstLoad: () =>
+                            session.onHiddenPageDone(hiddenGeneration, i),
                       ),
                     ),
                   ),
@@ -314,7 +324,7 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
     );
   }
 
-  Widget? _overlay(SheetStyle style, PayriffStrings strings) {
+  Widget? _overlay(SheetStyle style, PayriffSheetStrings strings) {
     final ThreeDsSession session = _session;
     switch (session.view) {
       case ThreeDsView.loader:
@@ -347,19 +357,23 @@ class _PayriffThreeDsSheetState extends State<PayriffThreeDsSheet>
 /// One hidden WebView of the 3-D Secure Method: it POSTs its request once,
 /// follows the 3DS navigation rules without ever ending the flow or opening
 /// apps, answers JavaScript dialogs silently, records the sites it loads in
-/// the payment's [ThreeDsWebsiteData], and is destroyed with the widget.
+/// the payment's [ThreeDsWebsiteData], and is destroyed with the widget. It
+/// calls [onFirstLoad] once its first page has finished loading or failed,
+/// or when it cannot load at all (CONTRACT §19.1 step 2).
 class _HiddenMethodWebView extends StatefulWidget {
   const _HiddenMethodWebView({
     required this.request,
     required this.apiBaseUrl,
     required this.websiteData,
     required this.logger,
+    required this.onFirstLoad,
   });
 
   final ThreeDsRequest request;
   final String apiBaseUrl;
   final ThreeDsWebsiteData websiteData;
   final SdkLogger logger;
+  final VoidCallback onFirstLoad;
 
   @override
   State<_HiddenMethodWebView> createState() => _HiddenMethodWebViewState();
@@ -370,6 +384,13 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
   late final ThreeDsNavigationPolicy _policy = ThreeDsNavigationPolicy(
     widget.apiBaseUrl,
   );
+  bool _loaded = false;
+
+  void _firstLoadDone() {
+    if (_loaded) return;
+    _loaded = true;
+    widget.onFirstLoad();
+  }
 
   @override
   void initState() {
@@ -395,6 +416,13 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
         },
         // Android does not report POST navigations as navigation requests.
         onPageStarted: websiteData.record,
+        onPageFinished: (String url) {
+          websiteData.record(url);
+          _firstLoadDone();
+        },
+        onWebResourceError: (WebResourceError error) {
+          if (error.isForMainFrame ?? true) _firstLoadDone();
+        },
         onUrlChange: (UrlChange change) {
           final String? url = change.url;
           if (url != null) websiteData.record(url);
@@ -407,8 +435,12 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
       dialogsOnAllPlatforms: true,
     );
     // Without its navigation rules the method WebView loads nothing; the
-    // `/three-ds` loop goes on regardless.
-    if (!ready || !mounted) return;
+    // `/three-ds` step goes on regardless.
+    if (!mounted) return;
+    if (!ready) {
+      _firstLoadDone();
+      return;
+    }
     websiteData.record(widget.request.url.toString());
     try {
       await widget.request.loadInto(_web);
@@ -416,6 +448,7 @@ class _HiddenMethodWebViewState extends State<_HiddenMethodWebView> {
       widget.logger.warning(
         'Could not start the 3-D Secure Method: ${redactError(e)}',
       );
+      _firstLoadDone();
     }
   }
 

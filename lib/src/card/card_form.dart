@@ -9,9 +9,11 @@ import '../config.dart';
 import '../internal/card/card_crypto.dart';
 import '../internal/card/card_strings.dart';
 import '../internal/card/format.dart';
+import '../internal/card/payment_view_scope.dart';
 import '../internal/card/validation.dart';
 import '../internal/language.dart';
 import '../internal/native_bridge.dart';
+import '../internal/ui/smooth_rect.dart';
 import '../payriff.dart';
 import 'brand_mark.dart';
 import 'card_form_style.dart';
@@ -40,12 +42,10 @@ const String cardInformationSection = 'card';
 Key cardBoxKey(String section) => ValueKey<String>('payriff.card.box.$section');
 
 /// Key of the label above a section's box.
-Key cardLabelKey(String section) =>
-    ValueKey<String>('payriff.card.label.$section');
+Key cardLabelKey(String section) => ValueKey<String>('payriff.card.label.$section');
 
 /// Key of the error line under a section's box.
-Key cardErrorKey(String section) =>
-    ValueKey<String>('payriff.card.error.$section');
+Key cardErrorKey(String section) => ValueKey<String>('payriff.card.error.$section');
 
 /// Payriff's brand colour (CONTRACT §16.14): the focus outline of the form
 /// and the payment view's Pay button.
@@ -54,12 +54,8 @@ const Color payriffBrandColor = Color(0xFF4DBDC6);
 /// Whether [context] is in dark mode: the Material theme's brightness, or
 /// the Cupertino theme's in a `CupertinoApp`. Internal to the SDK.
 bool payriffIsDark(BuildContext context) {
-  final bool material =
-      Localizations.of<MaterialLocalizations>(context, MaterialLocalizations) !=
-      null;
-  final Brightness brightness = material
-      ? Theme.of(context).brightness
-      : CupertinoTheme.brightnessOf(context);
+  final bool material = Localizations.of<MaterialLocalizations>(context, MaterialLocalizations) != null;
+  final Brightness brightness = material ? Theme.of(context).brightness : CupertinoTheme.brightnessOf(context);
   return brightness == Brightness.dark;
 }
 
@@ -108,16 +104,12 @@ class PayriffCardController extends ChangeNotifier {
 
 /// What `confirmCardPayment` gets from a form: the invalid fields, or the
 /// card to encrypt when there are none.
-typedef CardFormCheck = ({
-  List<PayriffCardFieldError> errors,
-  CardPlaintext? card,
-});
+typedef CardFormCheck = ({List<PayriffCardFieldError> errors, CardPlaintext? card});
 
 /// CONTRACT §16.7 step 1: validates the form of [controller] and shows every
 /// error, as after a payment attempt. `null` when no form is attached.
 /// Internal to the SDK.
-CardFormCheck? checkCardForm(PayriffCardController controller) =>
-    controller._form?._check();
+CardFormCheck? checkCardForm(PayriffCardController controller) => controller._form?._check();
 
 /// Locks or unlocks the form of [controller] while a payment runs. Internal
 /// to the SDK.
@@ -130,8 +122,7 @@ void setCardFormProcessing(PayriffCardController controller, bool value) {
 
 /// CONTRACT §16.5: clears the card values after a final result. Internal to
 /// the SDK.
-void clearCardForm(PayriffCardController controller) =>
-    controller._form?._clearValues();
+void clearCardForm(PayriffCardController controller) => controller._form?._clearValues();
 
 /// The native card form (CONTRACT §16.4): card number, expiry, CVV and the
 /// cardholder name, which [showHolder] can hide.
@@ -192,7 +183,10 @@ class PayriffCardForm extends StatefulWidget {
   final bool autoAdvance;
 
   /// The language of the labels, placeholders and errors. `null` uses
-  /// `PayriffConfig.language`, then the device language.
+  /// `PayriffConfig.language`, then the device language. In Arabic the form
+  /// is laid out right to left, as it is in a right-to-left app; the card
+  /// number, expiry and CVC are always typed left to right. Texts of your own
+  /// come from `PayriffConfig.strings`.
   final PayriffLanguage? language;
 
   /// The layout, colours, text styles, sizes and labels. The default looks
@@ -214,43 +208,37 @@ const List<PayriffCardField> _advanceOrder = <PayriffCardField>[
 ];
 
 // Copy and cut through a hardware keyboard, for the number and the CVV.
-final Map<ShortcutActivator, Intent> _noCopyShortcuts =
-    <ShortcutActivator, Intent>{
-      for (final LogicalKeyboardKey key in <LogicalKeyboardKey>[
-        LogicalKeyboardKey.keyC,
-        LogicalKeyboardKey.keyX,
-      ]) ...<ShortcutActivator, Intent>{
-        SingleActivator(key, control: true):
-            const DoNothingAndStopPropagationTextIntent(),
-        SingleActivator(key, meta: true):
-            const DoNothingAndStopPropagationTextIntent(),
-      },
-      const SingleActivator(LogicalKeyboardKey.copy):
-          const DoNothingAndStopPropagationTextIntent(),
-      const SingleActivator(LogicalKeyboardKey.cut):
-          const DoNothingAndStopPropagationTextIntent(),
-    };
+final Map<ShortcutActivator, Intent> _noCopyShortcuts = <ShortcutActivator, Intent>{
+  for (final LogicalKeyboardKey key in <LogicalKeyboardKey>[
+    LogicalKeyboardKey.keyC,
+    LogicalKeyboardKey.keyX,
+  ]) ...<ShortcutActivator, Intent>{
+    SingleActivator(key, control: true): const DoNothingAndStopPropagationTextIntent(),
+    SingleActivator(key, meta: true): const DoNothingAndStopPropagationTextIntent(),
+  },
+  const SingleActivator(LogicalKeyboardKey.copy): const DoNothingAndStopPropagationTextIntent(),
+  const SingleActivator(LogicalKeyboardKey.cut): const DoNothingAndStopPropagationTextIntent(),
+};
 
 class _PayriffCardFormState extends State<PayriffCardForm> {
-  final Map<PayriffCardField, TextEditingController> _text =
-      <PayriffCardField, TextEditingController>{
-        for (final PayriffCardField f in PayriffCardField.values)
-          f: TextEditingController(),
-      };
+  final Map<PayriffCardField, TextEditingController> _text = <PayriffCardField, TextEditingController>{
+    for (final PayriffCardField f in PayriffCardField.values) f: TextEditingController(),
+  };
   final Map<PayriffCardField, FocusNode> _focus = <PayriffCardField, FocusNode>{
-    for (final PayriffCardField f in PayriffCardField.values)
-      f: FocusNode(debugLabel: 'payriff.card.${f.value}'),
+    for (final PayriffCardField f in PayriffCardField.values) f: FocusNode(debugLabel: 'payriff.card.${f.value}'),
   };
   final Set<PayriffCardField> _touched = <PayriffCardField>{};
   final Map<PayriffCardField, String> _lastText = <PayriffCardField, String>{};
-  final Map<PayriffCardField, PayriffCardFormChange> _lastChange =
-      <PayriffCardField, PayriffCardFormChange>{};
+  final Map<PayriffCardField, PayriffCardFormChange> _lastChange = <PayriffCardField, PayriffCardFormChange>{};
   bool _submitted = false;
 
   /// Bumped whenever the values are cleared. It keys every field's subtree,
   /// so the field's undo history, which still holds what was typed, is
   /// thrown away with it (CONTRACT §16.5).
   int _generation = 0;
+
+  /// The payment view around the form, if any (CONTRACT §18.2, §18.4, §18.6).
+  PaymentViewScope? _viewScope;
 
   List<PayriffCardField> get _fields => <PayriffCardField>[
     PayriffCardField.number,
@@ -271,14 +259,16 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
     PayriffCardFormLayout.stacked => _fields,
   };
 
-  PayriffLanguage get _language =>
-      widget.language ?? Payriff.config?.language ?? deviceLanguage();
+  PayriffLanguage get _language => effectiveLanguage(widget.language, Payriff.config);
 
-  PayriffCardStrings get _strings => PayriffCardStrings(_language);
+  /// CONTRACT §18.6: the payment view's texts, then the config's, then the built-in ones.
+  PayriffCardStrings get _strings =>
+      PayriffCardStrings(_language, overrides: [?_viewScope?.strings, ?Payriff.config?.strings]);
 
-  ({bool valid, bool empty, PayriffCardFieldErrorCode? error}) _validate(
-    PayriffCardField field,
-  ) {
+  /// CONTRACT §18.2: the form's own smoothing, else the payment view's, else 0.
+  double get _cornerSmoothing => widget.style.cornerSmoothing ?? _viewScope?.cornerSmoothing ?? 0;
+
+  ({bool valid, bool empty, PayriffCardFieldErrorCode? error}) _validate(PayriffCardField field) {
     final String text = _text[field]!.text;
     switch (field) {
       case PayriffCardField.number:
@@ -296,19 +286,16 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
     }
   }
 
-  bool get _isComplete =>
-      _fields.every((PayriffCardField f) => _validate(f).valid);
+  bool get _isComplete => _fields.every((PayriffCardField f) => _validate(f).valid);
 
-  PayriffCardBrand? get _brand =>
-      validateNumber(_text[PayriffCardField.number]!.text).brand;
+  PayriffCardBrand? get _brand => validateNumber(_text[PayriffCardField.number]!.text).brand;
 
-  PayriffCardFieldErrorCode? _visibleError(PayriffCardField field) =>
-      visibleError(
-        _validate(field).error,
-        focused: _focus[field]!.hasFocus,
-        touched: _touched.contains(field),
-        submitted: _submitted,
-      );
+  PayriffCardFieldErrorCode? _visibleError(PayriffCardField field) => visibleError(
+    _validate(field).error,
+    focused: _focus[field]!.hasFocus,
+    touched: _touched.contains(field),
+    submitted: _submitted,
+  );
 
   @override
   void initState() {
@@ -320,6 +307,12 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
     for (final PayriffCardField field in PayriffCardField.values) {
       _focus[field]!.addListener(() => _onFocusChanged(field));
     }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _viewScope = PaymentViewScope.maybeOf(context);
   }
 
   @override
@@ -385,17 +378,12 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
       _emit(field);
     }
     if (errors.isNotEmpty) return (errors: errors, card: null);
-    final ExpiryValidation expiry = validateExpiry(
-      _text[PayriffCardField.expiry]!.text,
-      DateTime.now(),
-    );
+    final ExpiryValidation expiry = validateExpiry(_text[PayriffCardField.expiry]!.text, DateTime.now());
     return (
       errors: errors,
       card: CardPlaintext(
         pan: validateNumber(_text[PayriffCardField.number]!.text).value,
-        cardHolder: widget.showHolder
-            ? validateHolder(_text[PayriffCardField.holder]!.text).value
-            : 'Unknown',
+        cardHolder: widget.showHolder ? validateHolder(_text[PayriffCardField.holder]!.text).value : 'Unknown',
         expiryYear: expiry.expiryYear!,
         expiryMonth: expiry.expiryMonth!,
         cvv: validateCvv(_text[PayriffCardField.cvv]!.text).value,
@@ -452,8 +440,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
     final int index = _advanceOrder.indexOf(field);
     if (index < 0 || index + 1 >= _advanceOrder.length) return;
     final TextSelection selection = _text[field]!.selection;
-    final bool caretAtEnd =
-        selection.isCollapsed && selection.baseOffset == text.length;
+    final bool caretAtEnd = selection.isCollapsed && selection.baseOffset == text.length;
     if (caretAtEnd && _validate(field).valid) {
       _focus[_advanceOrder[index + 1]]!.requestFocus();
     }
@@ -462,8 +449,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   void _emit(PayriffCardField field) {
     final ValueChanged<PayriffCardFormChange>? onChanged = widget.onChanged;
     if (onChanged == null) return;
-    final ({bool valid, bool empty, PayriffCardFieldErrorCode? error}) v =
-        _validate(field);
+    final ({bool valid, bool empty, PayriffCardFieldErrorCode? error}) v = _validate(field);
     final PayriffCardFieldErrorCode? shown = _visibleError(field);
     final PayriffCardFormChange change = PayriffCardFormChange(
       field: field,
@@ -484,19 +470,14 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
 
   @override
   Widget build(BuildContext context) {
-    Widget form = _buildForm(context);
+    // CONTRACT §18.7, §19.3: right to left in a right-to-left app, and in Arabic.
+    Widget form = Directionality(textDirection: viewTextDirection(context, _language), child: _buildForm(context));
     // TextField needs Material localizations and a Material ancestor; a
     // CupertinoApp has neither.
-    if (Localizations.of<MaterialLocalizations>(
-          context,
-          MaterialLocalizations,
-        ) ==
-        null) {
+    if (Localizations.of<MaterialLocalizations>(context, MaterialLocalizations) == null) {
       form = Localizations.override(
         context: context,
-        delegates: const <LocalizationsDelegate<Object?>>[
-          DefaultMaterialLocalizations.delegate,
-        ],
+        delegates: const <LocalizationsDelegate<Object?>>[DefaultMaterialLocalizations.delegate],
         child: form,
       );
     }
@@ -504,10 +485,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   }
 
   Widget _buildForm(BuildContext context) {
-    final CardFormLook look = CardFormLook(
-      widget.style,
-      dark: payriffIsDark(context),
-    );
+    final CardFormLook look = CardFormLook(widget.style, dark: payriffIsDark(context));
     return AutofillGroup(
       // Never offer to save the card when the form goes away.
       onDisposeAction: AutofillContextAction.cancel,
@@ -543,11 +521,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
           label: style.cardLabel ?? _strings.cardInformation,
           // It names the group; the fields carry their own labels.
           header: true,
-          fields: const <PayriffCardField>[
-            PayriffCardField.number,
-            PayriffCardField.expiry,
-            PayriffCardField.cvv,
-          ],
+          fields: const <PayriffCardField>[PayriffCardField.number, PayriffCardField.expiry, PayriffCardField.cvv],
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -582,25 +556,14 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   Widget _stacked(CardFormLook look) {
     final PayriffCardFormStyle style = widget.style;
     final double gap = style.sectionSpacing;
-    Widget field(PayriffCardField f) => _section(
-      look,
-      section: f.value,
-      label: _label(f),
-      fields: <PayriffCardField>[f],
-      child: _cell(f, look),
-    );
+    Widget field(PayriffCardField f) =>
+        _section(look, section: f.value, label: _label(f), fields: <PayriffCardField>[f], child: _cell(f, look));
     Widget label(PayriffCardField f) => _sectionLabel(look, f.value, _label(f));
-    Widget box(PayriffCardField f) =>
-        _sectionBox(look, f.value, <PayriffCardField>[f], _cell(f, look));
-    Widget? error(PayriffCardField f) =>
-        _sectionError(look, f.value, <PayriffCardField>[f]);
+    Widget box(PayriffCardField f) => _sectionBox(look, f.value, <PayriffCardField>[f], _cell(f, look));
+    Widget? error(PayriffCardField f) => _sectionError(look, f.value, <PayriffCardField>[f]);
     // Expiry and CVC side by side: their labels, boxes and errors each on
     // one row, so the boxes line up even when one label wraps.
-    Widget pair(
-      Widget? expiry,
-      Widget? cvv, {
-      CrossAxisAlignment align = CrossAxisAlignment.start,
-    }) => Row(
+    Widget pair(Widget? expiry, Widget? cvv, {CrossAxisAlignment align = CrossAxisAlignment.start}) => Row(
       crossAxisAlignment: align,
       children: <Widget>[
         Expanded(child: expiry ?? const SizedBox.shrink()),
@@ -617,20 +580,12 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
         field(PayriffCardField.number),
         SizedBox(height: gap),
         if (style.showLabels) ...<Widget>[
-          pair(
-            label(PayriffCardField.expiry),
-            label(PayriffCardField.cvv),
-            align: CrossAxisAlignment.end,
-          ),
+          pair(label(PayriffCardField.expiry), label(PayriffCardField.cvv), align: CrossAxisAlignment.end),
           SizedBox(height: style.labelSpacing),
         ],
         pair(box(PayriffCardField.expiry), box(PayriffCardField.cvv)),
-        if (expiryError != null || cvvError != null)
-          pair(expiryError, cvvError),
-        if (widget.showHolder) ...<Widget>[
-          SizedBox(height: gap),
-          field(PayriffCardField.holder),
-        ],
+        if (expiryError != null || cvvError != null) pair(expiryError, cvvError),
+        if (widget.showHolder) ...<Widget>[SizedBox(height: gap), field(PayriffCardField.holder)],
       ],
     );
   }
@@ -638,8 +593,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   /// The field's label: shown above it in the stacked layout (the holder's
   /// in both), and always its accessibility label.
   String _label(PayriffCardField field) =>
-      (field == PayriffCardField.holder ? widget.style.holderLabel : null) ??
-      _strings.label(field);
+      (field == PayriffCardField.holder ? widget.style.holderLabel : null) ?? _strings.label(field);
 
   /// A section (CONTRACT §16.4): its label, one outlined box holding [child]
   /// and at most one error line, for the first visible error of [fields].
@@ -669,52 +623,32 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   /// The label above a section's box. A field's label is already the
   /// field's accessibility label, so only a group's label is read out, as a
   /// heading.
-  Widget _sectionLabel(
-    CardFormLook look,
-    String section,
-    String label, {
-    bool header = false,
-  }) {
-    final Widget text = Text(
-      label,
-      key: cardLabelKey(section),
-      style: look.label,
-    );
-    return header
-        ? Semantics(header: true, child: text)
-        : ExcludeSemantics(child: text);
+  Widget _sectionLabel(CardFormLook look, String section, String label, {bool header = false}) {
+    final Widget text = Text(label, key: cardLabelKey(section), style: look.label);
+    return header ? Semantics(header: true, child: text) : ExcludeSemantics(child: text);
   }
 
   /// A section's outlined box. The outline shows the error colour while the
   /// section shows an error, else the focus colour while one of [fields] has
   /// the focus.
-  Widget _sectionBox(
-    CardFormLook look,
-    String section,
-    List<PayriffCardField> fields,
-    Widget child,
-  ) {
+  Widget _sectionBox(CardFormLook look, String section, List<PayriffCardField> fields, Widget child) {
     final PayriffCardFormStyle style = widget.style;
     final bool error = _errorLine(fields) != null;
-    final bool focused = fields.any(
-      (PayriffCardField f) => _focus[f]!.hasFocus,
-    );
+    final bool focused = fields.any((PayriffCardField f) => _focus[f]!.hasFocus);
+    // CONTRACT §18.2: circular corners at smoothing 0, as before; smooth ones otherwise.
     return DecoratedBox(
       key: cardBoxKey(section),
-      decoration: BoxDecoration(
+      decoration: roundedRectDecoration(
         color: look.fill,
-        border: Border.all(
-          color: look.outline(error: error, focused: focused),
-          width: style.borderWidth,
-        ),
-        borderRadius: BorderRadius.circular(style.cornerRadius),
+        side: BorderSide(color: look.outline(error: error, focused: focused), width: style.borderWidth),
+        radius: style.cornerRadius,
+        smoothing: _cornerSmoothing,
       ),
       child: Padding(
         padding: EdgeInsets.all(style.borderWidth),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(
-            math.max(0, style.cornerRadius - style.borderWidth),
-          ),
+        child: clipRoundedRect(
+          radius: math.max(0, style.cornerRadius - style.borderWidth),
+          smoothing: _cornerSmoothing,
           child: child,
         ),
       ),
@@ -722,11 +656,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   }
 
   /// The error line under a section's box, or `null` while it has none.
-  Widget? _sectionError(
-    CardFormLook look,
-    String section,
-    List<PayriffCardField> fields,
-  ) {
+  Widget? _sectionError(CardFormLook look, String section, List<PayriffCardField> fields) {
     final String? error = _errorLine(fields);
     if (error == null) return null;
     return Padding(
@@ -756,20 +686,14 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
     final PayriffCardFormStyle style = widget.style;
     // CONTRACT §16.14: the heights include the outline (and, in the card
     // box, the line between the rows).
-    final double height = field == PayriffCardField.holder
-        ? style.holderHeight
-        : style.rowHeight;
+    final double height = field == PayriffCardField.holder ? style.holderHeight : style.rowHeight;
     return GestureDetector(
       // A tap above or below the text line focuses the field too.
       behavior: HitTestBehavior.opaque,
       excludeFromSemantics: true,
-      onTap: widget.controller.isProcessing
-          ? null
-          : () => _focus[field]!.requestFocus(),
+      onTap: widget.controller.isProcessing ? null : () => _focus[field]!.requestFocus(),
       child: ConstrainedBox(
-        constraints: BoxConstraints(
-          minHeight: math.max(0, height - 2 * style.borderWidth),
-        ),
+        constraints: BoxConstraints(minHeight: math.max(0, height - 2 * style.borderWidth)),
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: style.horizontalPadding),
           child: Row(
@@ -777,7 +701,14 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
               Expanded(child: _input(field, look)),
               if (field == PayriffCardField.number) ...<Widget>[
                 const SizedBox(width: 8),
-                _BrandMark(brand: _brand, look: look),
+                _BrandMark(
+                  brand: _brand,
+                  look: look,
+                  // CONTRACT §18.4: the form's colour, else the payment view's badge border, else #D1D1D6.
+                  borderColor:
+                      widget.style.brandMarkBorderColor ?? _viewScope?.badgeBorderColor ?? cardBrandMarkBorderColor,
+                  cornerSmoothing: _cornerSmoothing,
+                ),
               ],
             ],
           ),
@@ -791,8 +722,9 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
   Widget _input(PayriffCardField field, CardFormLook look) {
     final List<PayriffCardField> order = _shownOrder;
     final bool last = field == order.last;
-    final bool secret =
-        field == PayriffCardField.number || field == PayriffCardField.cvv;
+    final bool secret = field == PayriffCardField.number || field == PayriffCardField.cvv;
+    // CONTRACT §18.7: the number, expiry and CVC are always left to right; the holder follows the layout.
+    final bool ltr = field != PayriffCardField.holder;
     Widget input = TextField(
       key: switch (field) {
         PayriffCardField.number => cardNumberFieldKey,
@@ -803,25 +735,17 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
       controller: _text[field],
       focusNode: _focus[field],
       enabled: !widget.controller.isProcessing,
+      textDirection: ltr ? TextDirection.ltr : null,
+      textAlign: ltr ? TextAlign.left : TextAlign.start,
       onChanged: (String text) => _onChanged(field, text),
       onSubmitted: last ? null : (_) => _focusNext(field),
       textInputAction: last ? TextInputAction.done : TextInputAction.next,
-      keyboardType: field == PayriffCardField.holder
-          ? TextInputType.name
-          : TextInputType.number,
-      textCapitalization: field == PayriffCardField.holder
-          ? TextCapitalization.characters
-          : TextCapitalization.none,
+      keyboardType: field == PayriffCardField.holder ? TextInputType.name : TextInputType.number,
+      textCapitalization: field == PayriffCardField.holder ? TextCapitalization.characters : TextCapitalization.none,
       inputFormatters: switch (field) {
-        PayriffCardField.number => <TextInputFormatter>[
-          CardInputFormatter(CardFormatKind.number),
-        ],
-        PayriffCardField.expiry => <TextInputFormatter>[
-          CardInputFormatter(CardFormatKind.expiry),
-        ],
-        PayriffCardField.cvv => <TextInputFormatter>[
-          CardInputFormatter(CardFormatKind.cvv),
-        ],
+        PayriffCardField.number => <TextInputFormatter>[CardInputFormatter(CardFormatKind.number)],
+        PayriffCardField.expiry => <TextInputFormatter>[CardInputFormatter(CardFormatKind.expiry)],
+        PayriffCardField.cvv => <TextInputFormatter>[CardInputFormatter(CardFormatKind.cvv)],
         // CONTRACT §16.4: always upper case, capped after upper-casing.
         PayriffCardField.holder => <TextInputFormatter>[
           const HolderInputFormatter(),
@@ -830,12 +754,8 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
       },
       // CONTRACT §16.5: autofill for number, expiry and holder only.
       autofillHints: switch (field) {
-        PayriffCardField.number => const <String>[
-          AutofillHints.creditCardNumber,
-        ],
-        PayriffCardField.expiry => const <String>[
-          AutofillHints.creditCardExpirationDate,
-        ],
+        PayriffCardField.number => const <String>[AutofillHints.creditCardNumber],
+        PayriffCardField.expiry => const <String>[AutofillHints.creditCardExpirationDate],
         PayriffCardField.holder => const <String>[AutofillHints.creditCardName],
         PayriffCardField.cvv => null,
       },
@@ -861,6 +781,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
         visualDensity: VisualDensity.standard,
         hintText: _strings.placeholder(field),
         hintStyle: TextStyle(color: look.placeholder),
+        hintTextDirection: ltr ? TextDirection.ltr : null,
         hintMaxLines: 1,
         border: InputBorder.none,
         enabledBorder: InputBorder.none,
@@ -894,16 +815,10 @@ final class CardFormLook {
     : labelColor = dark ? const Color(0xFFE1E4E8) : const Color(0xFF34363A),
       inputColor = dark ? const Color(0xFF8E8E93) : const Color(0xFF4D4F54),
       fill = style.fieldBackgroundColor ?? const Color(0x00000000),
-      border =
-          style.borderColor ??
-          (dark ? const Color(0xFF3F4145) : const Color(0xFFECEEF0)),
+      border = style.borderColor ?? (dark ? const Color(0xFF3F4145) : const Color(0xFFECEEF0)),
       focus = style.focusedBorderColor ?? payriffBrandColor,
-      error =
-          style.errorColor ??
-          (dark ? const Color(0xFFEC5545) : const Color(0xFFEC4D3D)),
-      placeholder =
-          style.placeholderColor ??
-          (dark ? const Color(0xFF5F6167) : const Color(0xFF76787F));
+      error = style.errorColor ?? (dark ? const Color(0xFFEC5545) : const Color(0xFFEC4D3D)),
+      placeholder = style.placeholderColor ?? (dark ? const Color(0xFF5F6167) : const Color(0xFF76787F));
 
   /// The style being resolved.
   final PayriffCardFormStyle style;
@@ -930,11 +845,8 @@ final class CardFormLook {
   final Color placeholder;
 
   /// The labels: 14 semibold.
-  TextStyle get label => TextStyle(
-    color: labelColor,
-    fontSize: 14,
-    fontWeight: FontWeight.w600,
-  ).merge(style.labelTextStyle);
+  TextStyle get label =>
+      TextStyle(color: labelColor, fontSize: 14, fontWeight: FontWeight.w600).merge(style.labelTextStyle);
 
   /// What the customer types, and the placeholders: 14 regular.
   TextStyle get input => TextStyle(
@@ -945,23 +857,21 @@ final class CardFormLook {
   ).merge(style.inputTextStyle);
 
   /// The error lines: 13 regular.
-  TextStyle get errorText => TextStyle(
-    color: error,
-    fontSize: 13,
-    fontWeight: FontWeight.w400,
-  ).merge(style.errorTextStyle);
+  TextStyle get errorText =>
+      TextStyle(color: error, fontSize: 13, fontWeight: FontWeight.w400).merge(style.errorTextStyle);
 
   /// The outline colour of a section.
-  Color outline({required bool error, required bool focused}) =>
-      error ? this.error : (focused ? focus : border);
+  Color outline({required bool error, required bool focused}) => error ? this.error : (focused ? focus : border);
 }
 
 /// The brand of the card number as a small mark.
 class _BrandMark extends StatelessWidget {
-  const _BrandMark({required this.brand, required this.look});
+  const _BrandMark({required this.brand, required this.look, required this.borderColor, required this.cornerSmoothing});
 
   final PayriffCardBrand? brand;
   final CardFormLook look;
+  final Color borderColor;
+  final double cornerSmoothing;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -970,8 +880,14 @@ class _BrandMark extends StatelessWidget {
     label: switch (brand) {
       PayriffCardBrand.visa => 'Visa',
       PayriffCardBrand.mastercard => 'Mastercard',
+      PayriffCardBrand.mada => 'mada',
       null => null,
     },
-    child: CardBrandMark(brand: brand, outline: look.placeholder),
+    child: CardBrandMark(
+      brand: brand,
+      outline: look.placeholder,
+      borderColor: borderColor,
+      cornerSmoothing: cornerSmoothing,
+    ),
   );
 }

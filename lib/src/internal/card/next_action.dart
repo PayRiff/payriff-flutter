@@ -24,7 +24,8 @@ final class ChallengeAction extends NextAction {
   String toString() => 'ChallengeAction(<redacted>)';
 }
 
-/// Run the 3-D Secure Method in hidden WebViews, then poll `/three-ds`.
+/// Run the 3-D Secure Method in hidden WebViews, then call `/three-ds`
+/// (CONTRACT §19.1).
 final class MethodAction extends NextAction {
   /// Creates a method step.
   const MethodAction({this.methodUrl, this.methodData, this.methodUrlServer});
@@ -42,7 +43,7 @@ final class MethodAction extends NextAction {
   String toString() => 'MethodAction(<redacted>)';
 }
 
-/// Wait 1 s, then poll `/three-ds`.
+/// Call `/three-ds` again in 2 s, for at most 30 s (CONTRACT §19.1 step 4).
 final class WaitAction extends NextAction {
   /// Creates a wait step.
   const WaitAction();

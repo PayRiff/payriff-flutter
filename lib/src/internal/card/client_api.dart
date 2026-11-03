@@ -170,12 +170,12 @@ final class ClientApi {
   Future<Map<String, Object?>> retrieveOrder(String orderId) =>
       _call('GET', clientOrderPath(orderId), timeout: clientGetTimeout);
 
-  /// `GET /api/v3/client/orders/{orderId}/three-ds`.
-  Future<Map<String, Object?>> threeDs(String orderId) => _call(
-    'GET',
-    clientOrderPath(orderId, '/three-ds'),
-    timeout: clientGetTimeout,
-  );
+  /// `GET /api/v3/client/orders/{orderId}/three-ds`, with [timeout]: 60 s
+  /// after the 3-D Secure Method (CONTRACT §19.1).
+  Future<Map<String, Object?>> threeDs(
+    String orderId, {
+    Duration timeout = clientGetTimeout,
+  }) => _call('GET', clientOrderPath(orderId, '/three-ds'), timeout: timeout);
 
   /// `GET /api/v3/client/orders/{orderId}/status`.
   Future<Map<String, Object?>> status(String orderId) => _call(

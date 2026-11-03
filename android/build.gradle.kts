@@ -4,10 +4,14 @@
 // (§16.16) and Google Pay (§17.5). Its one third-party runtime dependency is Google's
 // play-services-wallet, for the Google Pay API and its PayButton.
 group = "com.payriff.flutter"
-version = "1.0.0-rc.3"
+version = "1.0.0-rc.4"
 
 buildscript {
-    val kotlinVersion = "2.4.0"
+    // CONTRACT §18.9: the lowest Kotlin Gradle plugin that builds the plugin, so it never pushes a
+    // newer one onto the app. 2.2.10 is also the version AGP 9.1.0 below depends on, so this
+    // classpath cannot resolve lower; the app's own Kotlin Gradle plugin (2.2.20 or newer for
+    // Flutter 3.47) is the one that compiles the plugin.
+    val kotlinVersion = "2.2.10"
     repositories {
         google()
         mavenCentral()

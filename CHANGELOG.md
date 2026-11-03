@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.0.0-rc.4 - 2026-11-04
+
+### Added
+
+- Design options (CONTRACT revision 8), all off by default; without them
+  every screen looks and behaves as before:
+  - `PayriffPaymentViewStyle.payButtonTitle`: the whole Pay button text,
+    without the amount. The wallet sheets and the 3-D Secure page still show
+    the real amount; showing the charge on your screen is up to you.
+  - `PayriffPaymentViewStyle.cornerSmoothing` and
+    `PayriffCardFormStyle.cornerSmoothing` (0–1): Figma-style smooth corners
+    for the fields, the card box, the brand mark, the Pay button and the
+    badges.
+  - `PayriffPaymentViewStyle.buttonDisabledColor` and
+    `buttonDisabledTextColor`: a disabled Pay button in these colours at
+    full opacity.
+  - `PayriffPaymentViewStyle.badgeBorderColor` and
+    `PayriffCardFormStyle.brandMarkBorderColor`.
+  - `PayriffStrings` for every visible text of the card form, the payment
+    view and the 3-D Secure sheet, with `errorMessages` for the on-screen
+    error lines (the view's error line, and the device, not-payable and
+    page-load lines when their own field is not set):
+    `PayriffConfig.strings` app-wide, `PayriffPaymentView.strings` per view
+    (it wins field by field).
+  - `PayriffPaymentView.onPaymentStarted` (`PayriffPaymentMethod`),
+    `onOrderLoaded` and `onLoadFailed`.
+  - Right-to-left layouts: the view, the form and the 3-D Secure sheet follow
+    `Directionality`; the card number, expiry and CVC stay left to right.
+  - `Payriff.isSupported()`: `true` on iOS 16+ and Android 7.0+.
+- Payriff.js 1.3.1 alignment (CONTRACT revision 9):
+  - mada cards (`PayriffCardBrand.mada`) with their BINs and brand mark. mada
+    is recognised once the whole 6- or 8-digit BIN is typed, so a card that
+    is also Visa or Mastercard shows that brand until then.
+  - Arabic (`PayriffLanguage.ar`), laid out right to left. With no language
+    set, a device language the SDK does not have now gives Arabic in region
+    `sa` (English in region `az`, as before).
+  - Apple Pay offers mada in region `sa`.
+
+### Changed
+
+- The 3-D Secure Method follows Payriff.js 1.3.1: the issuer's hidden page
+  runs only with both its URL and its data, `/three-ds` waits until the
+  hidden pages have loaded (at most 10 s), has a 60 s timeout and one retry
+  on a network error or HTTP 5xx, and a `wait` answer is followed every 2 s
+  for at most 30 s before status polling. The 1 s × 30 loop is gone.
+- The Mastercard and Visa badges are their frameless marks in a frame drawn
+  by the SDK; the framed badge images are no longer shipped. With the
+  defaults they look as before.
+- The Android part pins the Kotlin Gradle plugin at 2.2.10 (was 2.4.0), so
+  it never asks for a newer one than the app's.
+- `PayriffCardBrand` and `PayriffLanguage` have new values (`mada`, `ar`): a
+  `switch` over them needs a case for each.
+
 ## 1.0.0-rc.3 - 2026-11-03
 
 ### Added

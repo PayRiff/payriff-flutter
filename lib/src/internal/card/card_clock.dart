@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
-/// Time for the card flow: the 429 backoff, the `/pay` retry, the
-/// `/three-ds` loop and status polling.
+/// Time for the card flow: the 429 backoff, the `/pay` retry, the 3-D
+/// Secure Method step and status polling.
 abstract interface class CardClock {
   /// The current time.
   DateTime now();

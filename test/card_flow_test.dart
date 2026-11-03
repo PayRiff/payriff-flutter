@@ -1031,7 +1031,7 @@ void main() {
         'navigation it cancels', () {
       final ThreeDsSession session = ThreeDsSession(
         apiBaseUrl: 'https://sb-api.payriff.com',
-        strings: const PayriffStrings(PayriffLanguage.en),
+        strings: const PayriffSheetStrings(PayriffLanguage.en),
         openExternal: (String url) async => true,
       );
       addTearDown(session.dispose);
@@ -1260,7 +1260,7 @@ void main() {
       api: api,
       orderId: testOrderId,
       clock: clock,
-      strings: const PayriffStrings(PayriffLanguage.en),
+      strings: const PayriffSheetStrings(PayriffLanguage.en),
       // A bug while opening the 3DS sheet, after the card was sent.
       openSheet: (ThreeDsSession session) => throw StateError('broken'),
     ).run(_testCard);

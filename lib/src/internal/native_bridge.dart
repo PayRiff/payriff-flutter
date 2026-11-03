@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../error.dart';
@@ -79,8 +80,9 @@ final class GooglePayError extends GooglePayLoadResult {
 /// The one wrapper around the plugin's `payriff/native` method channel
 /// (CONTRACT §16.11): card encryption, the app id and name, screen
 /// protection, hardened external launches, the removal of 3-D Secure website
-/// data (§9.1a), the device integrity checks (§16.16), and PassKit and the
-/// Google Pay API (§17). Nothing else in the SDK touches the channel; the
+/// data (§9.1a), the device integrity checks (§16.16), PassKit and the
+/// Google Pay API (§17), and the OS version check of `Payriff.isSupported`
+/// (§18.8). Nothing else in the SDK touches the channel; the
 /// wallet buttons have their own channels (`payriff/apple_pay_button/<id>`,
 /// `payriff/google_pay_button/<id>`) for their taps.
 ///
@@ -383,6 +385,28 @@ abstract final class NativeBridge {
         return GooglePayError(code is int ? code : 8);
     }
     return internalError;
+  }
+
+  /// CONTRACT §18.8: whether the OS can run the SDK's payments, iOS 16 or
+  /// later or Android 7.0 (API 24) or later, as the plugin reports it.
+  /// `false` on any other platform, without the plugin, and on any failure.
+  /// Never throws.
+  static Future<bool> isSupported() async {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+      case TargetPlatform.android:
+        break;
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return false;
+    }
+    try {
+      return await channel.invokeMethod<bool>('isSupported') ?? false;
+    } on Object {
+      return false;
+    }
   }
 
   /// Forgets the cached app id and name (`Payriff.debugReset`).

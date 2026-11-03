@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -36,6 +37,7 @@ import java.util.concurrent.Executors
  * - `appName` -> the application label: the last fallback of the Google Pay sheet's merchant
  *   name (§17.4)
  * - `googlePayIsReady` and `googlePayLoad`: the Google Pay API (§17.5, [GooglePay])
+ * - `isSupported` -> bool: Android 7.0 (API 24) or later, for `Payriff.isSupported` (§18.8)
  *
  * The platform view `payriff/google_pay_button` is Google's `PayButton` ([GooglePayButtonFactory],
  * §17.10).
@@ -145,6 +147,7 @@ class PayriffPlugin :
             }
             "deviceIntegrity" -> deviceIntegrity(result)
             "appName" -> result.success(appName())
+            "isSupported" -> result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
             "googlePayIsReady" ->
                 googlePay.isReady(
                     activity,

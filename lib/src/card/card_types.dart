@@ -27,7 +27,13 @@ enum PayriffCardBrand {
   visa('visa'),
 
   /// Mastercard (`51`–`55`, `2221`–`2720`).
-  mastercard('mastercard');
+  mastercard('mastercard'),
+
+  /// mada, Saudi Arabia's domestic debit network (CONTRACT §19.2): its 6- or
+  /// 8-digit BINs, checked before Visa and Mastercard once the whole BIN is
+  /// typed, so a card that is also Visa or Mastercard shows that brand until
+  /// then.
+  mada('mada');
 
   const PayriffCardBrand(this.value);
 

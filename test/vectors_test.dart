@@ -173,9 +173,14 @@ void main() {
     );
     test('has cases', () => expect(cases, isNotEmpty));
     for (final Map<String, Object?> c in cases) {
-      test('locale "${c['locale']}"', () {
+      // Revision 9 (CONTRACT §19.3): a case may name the region, whose
+      // fallback differs.
+      final PayriffRegion region = c['region'] == 'sa'
+          ? PayriffRegion.sa
+          : PayriffRegion.az;
+      test('locale "${c['locale']}" in region ${region.name}', () {
         expect(
-          languageForLocaleTag(c['locale']! as String).value,
+          languageForLocaleTag(c['locale']! as String, region: region).value,
           c['expected'],
         );
       });
@@ -240,13 +245,13 @@ void main() {
       expect(payriffStringTable, expected);
     });
 
-    test('every key and language is reachable through PayriffStrings', () {
+    test('every key and language is reachable through PayriffSheetStrings', () {
       expect(
         PayriffStringKey.values.map((PayriffStringKey k) => k.id).toSet(),
         strings.keys.toSet(),
       );
       for (final PayriffLanguage language in PayriffLanguage.values) {
-        final PayriffStrings table = PayriffStrings(language);
+        final PayriffSheetStrings table = PayriffSheetStrings(language);
         for (final PayriffStringKey key in PayriffStringKey.values) {
           final Map<String, Object?> byLanguage =
               strings[key.id]! as Map<String, Object?>;
@@ -276,7 +281,7 @@ void main() {
         final SheetPresenter presenter = SheetPresenter(
           navigator: Navigator.of(context),
           material: false,
-          strings: PayriffStrings(language),
+          strings: PayriffSheetStrings(language),
         );
 
         // alert(): OK only.
@@ -326,7 +331,8 @@ void main() {
   });
 
   test('every vector file is covered by this file, card_vectors_test.dart, '
-      'tls_pinning_test.dart or wallet_vectors_test.dart', () {
+      'tls_pinning_test.dart, wallet_vectors_test.dart or '
+      'design_options_test.dart', () {
     final Set<String> files = Directory('test/vectors')
         .listSync()
         .whereType<File>()
@@ -359,11 +365,17 @@ void main() {
     // CONTRACT §17 (revision 7): every section asserted in
     // test/wallet_vectors_test.dart.
     const Set<String> coveredByWalletTests = <String>{'wallet.json'};
+    // CONTRACT §18 (revision 8): asserted in test/design_options_test.dart.
+    const Set<String> coveredByDesignTests = <String>{
+      'corner_smoothing.json',
+      'strings_override.json',
+    };
     expect(files, <String>{
       ...covered,
       ...coveredByCardTests,
       ...coveredByPinningTests,
       ...coveredByWalletTests,
+      ...coveredByDesignTests,
     });
   });
 }

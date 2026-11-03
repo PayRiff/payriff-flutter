@@ -21,6 +21,7 @@ import WebKit
 /// - `applePayPresent` {request} -> {event: authorized, paymentData} | {event: closed} |
 ///   {event: notPresented}, and `applePayComplete` {status} -> {status} once the sheet is gone
 ///   (§17.6, `PayriffApplePaySession`).
+/// - `isSupported` -> bool: iOS 16 or later, for `Payriff.isSupported` (§18.8).
 ///
 /// The platform view `payriff/apple_pay_button` is Apple's `PKPaymentButton`
 /// (`PayriffApplePayButtonFactory`, §17.10).
@@ -107,6 +108,12 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
       deviceIntegrity(result: result)
     case "appName":
       result(Self.appName())
+    case "isSupported":
+      if #available(iOS 16.0, *) {
+        result(true)
+      } else {
+        result(false)
+      }
     case "applePayCanMakePayments":
       let networks = PayriffApplePayRequest.networks(args?["networks"] as? [String] ?? [])
       let capabilities = PayriffApplePayRequest.capabilities(

@@ -16,7 +16,7 @@ enum PayriffCardFormLayout {
   stacked,
 }
 
-/// The look of `PayriffCardForm` (CONTRACT §16.4 and §16.14).
+/// The look of `PayriffCardForm` (CONTRACT §16.4, §16.14 and §18).
 ///
 /// Every property is optional. The defaults reproduce the card form of
 /// Payriff's hosted payment page (pay.payriff.com): its colours, sizes and
@@ -58,6 +58,8 @@ final class PayriffCardFormStyle {
     this.horizontalPadding = 14,
     this.labelSpacing = 10,
     this.sectionSpacing = 16,
+    this.cornerSmoothing,
+    this.brandMarkBorderColor,
   }) : assert(borderWidth >= 0),
        assert(cornerRadius >= 0),
        assert(holderHeight >= 0),
@@ -145,6 +147,18 @@ final class PayriffCardFormStyle {
   /// layout, between the fields. Defaults to 16.
   final double sectionSpacing;
 
+  /// How smooth the corners of the fields, the card box and the brand mark
+  /// are, from 0 (circular corners) to 1 (CONTRACT §18.2): Figma's corner
+  /// smoothing, as in iOS-style continuous corners. Values outside 0…1 are
+  /// clamped. `null`: the payment view's `cornerSmoothing` inside a
+  /// `PayriffPaymentView`, else 0.
+  final double? cornerSmoothing;
+
+  /// The border of the brand mark in the card number field (CONTRACT §18.4).
+  /// `null`: the payment view's `badgeBorderColor` inside a
+  /// `PayriffPaymentView` when it is set, else `#D1D1D6`.
+  final Color? brandMarkBorderColor;
+
   /// A copy with the given properties replaced.
   PayriffCardFormStyle copyWith({
     PayriffCardFormLayout? layout,
@@ -166,6 +180,8 @@ final class PayriffCardFormStyle {
     double? horizontalPadding,
     double? labelSpacing,
     double? sectionSpacing,
+    double? cornerSmoothing,
+    Color? brandMarkBorderColor,
   }) => PayriffCardFormStyle(
     layout: layout ?? this.layout,
     labelTextStyle: labelTextStyle ?? this.labelTextStyle,
@@ -186,6 +202,8 @@ final class PayriffCardFormStyle {
     horizontalPadding: horizontalPadding ?? this.horizontalPadding,
     labelSpacing: labelSpacing ?? this.labelSpacing,
     sectionSpacing: sectionSpacing ?? this.sectionSpacing,
+    cornerSmoothing: cornerSmoothing ?? this.cornerSmoothing,
+    brandMarkBorderColor: brandMarkBorderColor ?? this.brandMarkBorderColor,
   );
 
   @override
@@ -209,10 +227,12 @@ final class PayriffCardFormStyle {
       other.rowHeight == rowHeight &&
       other.horizontalPadding == horizontalPadding &&
       other.labelSpacing == labelSpacing &&
-      other.sectionSpacing == sectionSpacing;
+      other.sectionSpacing == sectionSpacing &&
+      other.cornerSmoothing == cornerSmoothing &&
+      other.brandMarkBorderColor == brandMarkBorderColor;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
     layout,
     labelTextStyle,
     inputTextStyle,
@@ -232,5 +252,7 @@ final class PayriffCardFormStyle {
     horizontalPadding,
     labelSpacing,
     sectionSpacing,
-  );
+    cornerSmoothing,
+    brandMarkBorderColor,
+  ]);
 }

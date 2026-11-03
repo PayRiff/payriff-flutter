@@ -10,15 +10,20 @@ import '../error.dart';
 import '../internal/amount.dart';
 import '../internal/card/card_strings.dart';
 import '../internal/card/device_integrity.dart';
+import '../internal/card/payment_view_scope.dart';
 import '../internal/language.dart';
 import '../internal/logger.dart';
 import '../internal/ui/glyphs.dart';
+import '../internal/ui/smooth_rect.dart';
 import '../internal/wallet/wallet_button.dart';
 import '../internal/wallet/wallet_payment.dart';
 import '../internal/wallet/wallet_rules.dart';
+import '../payment_method.dart';
 import '../payriff.dart';
 import '../result.dart';
+import '../strings.dart';
 import 'card_form.dart';
+import 'card_types.dart';
 import 'client_order.dart';
 import 'payment_view_style.dart';
 
@@ -34,6 +39,13 @@ const Key paymentViewErrorKey = ValueKey<String>('payriff.view.error');
 /// Key of the row of card badges.
 const Key paymentViewBadgesKey = ValueKey<String>('payriff.view.badges');
 
+/// Key of the frame of a card badge: `mastercard` or `visa`.
+Key paymentViewBadgeKey(String brand) =>
+    ValueKey<String>('payriff.view.badge.$brand');
+
+/// The default border of the card badges (CONTRACT §18.4).
+const Color paymentViewBadgeBorderColor = Color(0xFFECEEF0);
+
 /// Key of the lock and "Proceed securely by PCI DSS" line.
 const Key paymentViewSecureKey = ValueKey<String>('payriff.view.secure');
 
@@ -48,17 +60,20 @@ const Key paymentViewWalletDividerKey = ValueKey<String>(
   'payriff.view.walletDivider',
 );
 
-/// The images of the payment view (CONTRACT §16.14), package assets of
-/// `payriff` with 2.0x and 3.0x variants.
+/// The images of the payment view (CONTRACT §16.14, §18.4), package assets
+/// of `payriff` with 2.0x and 3.0x variants.
 abstract final class PaymentViewAssets {
   /// The package that holds the images.
   static const String package = 'payriff';
 
-  /// The Mastercard acceptance badge, 43×28.
-  static const String mastercard = 'assets/payment_view/mastercard.png';
+  /// The Mastercard mark of its badge, 43×28 and without the frame, which
+  /// the view draws.
+  static const String mastercardMark =
+      'assets/payment_view/mastercard-mark.png';
 
-  /// The Visa acceptance badge, 42×28.
-  static const String visa = 'assets/payment_view/visa.png';
+  /// The Visa mark of its badge, 42×28 and without the frame, which the
+  /// view draws.
+  static const String visaMark = 'assets/payment_view/visa-mark.png';
 
   /// The Payriff logo of the footer in light mode, 82×16.
   static const String logo = 'assets/payment_view/payriff-logo.png';
@@ -68,22 +83,34 @@ abstract final class PaymentViewAssets {
   static const String logoDark = 'assets/payment_view/payriff-logo-dark.png';
 
   /// Every image.
-  static const List<String> all = <String>[mastercard, visa, logo, logoDark];
+  static const List<String> all = <String>[
+    mastercardMark,
+    visaMark,
+    logo,
+    logoDark,
+  ];
 
   /// The footer's logo: [logo], or [logoDark] in dark mode.
   static String footerLogo({required bool dark}) => dark ? logoDark : logo;
 }
 
-/// The Pay button's title (CONTRACT §16.14): `view.pay`, or [label] (the
-/// style's `payButtonLabel`) without white space around it, then the amount
-/// with 2 decimals and `.` as the separator, then the currency, for example
-/// "Pay 1.02 AZN". Only the word while the amount is unknown. The amount is
-/// the one the Apple Pay and Google Pay sheets show (CONTRACT §17.4).
+/// The Pay button's title (CONTRACT §16.14, §18.1): [title] (the style's
+/// `payButtonTitle`) without white space around it, as the whole text;
+/// otherwise `view.pay` (or `PayriffStrings.pay` through [strings]), or
+/// [label] (the style's `payButtonLabel`) without white space around it,
+/// then the amount with 2 decimals and `.` as the separator, then the
+/// currency, for example "Pay 1.02 AZN". Only the word while the amount is
+/// unknown. The amount is the one the Apple Pay and Google Pay sheets show
+/// (CONTRACT §17.4).
 String paymentViewPayTitle(
   PayriffCardStrings strings,
   PayriffClientOrder? order, {
   String? label,
+  String? title,
 }) {
+  // CONTRACT §18.1: the whole text in every state; blank counts as none.
+  final String? whole = title?.trim();
+  if (whole != null && whole.isNotEmpty) return whole;
   // A blank label counts as none (CONTRACT §16.14).
   final String? custom = label?.trim();
   final String pay = custom == null || custom.isEmpty ? strings.pay : custom;
@@ -132,6 +159,14 @@ String paymentViewPayTitle(
 /// order that accepts a wallet but no card says that it cannot be paid by
 /// card, and the wallet button stays usable.
 ///
+/// **Design options** (CONTRACT §18). [PayriffPaymentViewStyle] can set the
+/// whole Pay button text, smooth corners, the disabled Pay colours and the
+/// badge borders; [strings] (over `PayriffConfig.strings`) replaces any text
+/// of the view and of the sheets it opens. The view follows a right-to-left
+/// layout ([Directionality]), and is right to left in Arabic; the card
+/// number, expiry and CVC stay left to right. [onPaymentStarted],
+/// [onOrderLoaded] and [onLoadFailed] report what happens before a result.
+///
 /// Give it the whole screen, for example as a `Scaffold` body: it scrolls
 /// when the keyboard is up and keeps the footer at the bottom when there is
 /// room. Call [Payriff.configure] first.
@@ -160,6 +195,10 @@ class PayriffPaymentView extends StatefulWidget {
     required this.onResult,
     this.language,
     this.style = const PayriffPaymentViewStyle(),
+    this.strings,
+    this.onPaymentStarted,
+    this.onOrderLoaded,
+    this.onLoadFailed,
   });
 
   /// The id of the order your server created.
@@ -181,6 +220,30 @@ class PayriffPaymentView extends StatefulWidget {
   /// The colours, sizes, texts and parts of the view, and the form's look.
   final PayriffPaymentViewStyle style;
 
+  /// Texts of your own for this view and the 3-D Secure sheet it opens
+  /// (CONTRACT §18.6). A field set here wins over the same field of
+  /// `PayriffConfig.strings`; a field left `null` or blank keeps the
+  /// config's, else the SDK's own text. The style's text options win over
+  /// both.
+  final PayriffStrings? strings;
+
+  /// Called once per payment attempt, when it starts (CONTRACT §18.5): for
+  /// [PayriffPaymentMethod.card] when Pay is tapped with a complete form,
+  /// before anything is sent; for Apple Pay or Google Pay when its button
+  /// is tapped, before its sheet opens.
+  final ValueChanged<PayriffPaymentMethod>? onPaymentStarted;
+
+  /// Called after every successful read of the order by the view (when it
+  /// appears, and again for a new `orderId` or `clientSecret`), also when
+  /// the order cannot be paid by card.
+  final ValueChanged<PayriffClientOrder>? onOrderLoaded;
+
+  /// Called when the view gets no order: the order could not be read, or
+  /// the device is compromised ([PayriffErrorCode.deviceCompromised]), in
+  /// which case the view does not read it. A fatal error, and a compromised
+  /// device, also go to [onResult] once.
+  final ValueChanged<PayriffError>? onLoadFailed;
+
   @override
   State<PayriffPaymentView> createState() => _PayriffPaymentViewState();
 }
@@ -191,10 +254,11 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   PayriffClientOrder? _order;
   bool _loading = true;
 
-  /// Why the order did not load or can no longer be paid (an error
-  /// message); shown under the button. An order that loaded but cannot be
-  /// paid by card shows `view.notPayable` instead, in the view's language.
-  String? _error;
+  /// Why the order did not load or can no longer be paid; its message, or
+  /// the app's text for its code (CONTRACT §18.6), shows under the button.
+  /// An order that loaded but cannot be paid by card shows
+  /// `view.notPayable` instead, in the view's language.
+  PayriffError? _error;
 
   /// A payment ended with a status, or the order can no longer be paid.
   bool _finished = false;
@@ -280,6 +344,8 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
         _loading = false;
         _deviceRefused = true;
       });
+      // CONTRACT §18.5: the view gets no order.
+      widget.onLoadFailed?.call(refused);
       _reportOnce(refused);
       return;
     }
@@ -306,10 +372,18 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     setState(() {
       _loading = false;
       _order = order;
-      if (error != null) _error = error.message;
+      if (error != null) _error = error;
     });
-    if (error != null && error.isFatal) _reportOnce(error);
-    if (order != null) await _decideWallet(generation, order);
+    // CONTRACT §18.5: after every read, and for every read that failed.
+    if (error != null) {
+      widget.onLoadFailed?.call(error);
+      if (error.isFatal) _reportOnce(error);
+    }
+    if (order != null) {
+      widget.onOrderLoaded?.call(order);
+      if (!mounted || generation != _loadGeneration) return;
+      await _decideWallet(generation, order);
+    }
   }
 
   /// CONTRACT §17.3 for the loaded [order]; the device check passed when
@@ -336,12 +410,15 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
 
   Future<void> _pay() async {
     if (!_canPay) return;
+    // CONTRACT §18.5: the form is complete; nothing was sent yet.
+    widget.onPaymentStarted?.call(PayriffPaymentMethod.card);
     setState(() => _paying = true);
-    final PayriffResult result = await Payriff.confirmCardPayment(
+    final PayriffResult result = await confirmCardPaymentWithStrings(
       context,
       _card,
       orderId: widget.orderId,
       clientSecret: widget.clientSecret,
+      viewStrings: widget.strings,
     );
     _finishPayment(result);
   }
@@ -351,6 +428,11 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     final WalletKind? kind = _wallet;
     final PayriffClientOrder? order = _order;
     if (kind == null || order == null || !_walletEnabled) return;
+    // CONTRACT §18.5: before the wallet's sheet opens.
+    widget.onPaymentStarted?.call(switch (kind) {
+      WalletKind.applePay => PayriffPaymentMethod.applePay,
+      WalletKind.googlePay => PayriffPaymentMethod.googlePay,
+    });
     setState(() => _paying = true);
     // CONTRACT §17.9: the form is locked while any payment runs.
     setCardFormProcessing(_card, true);
@@ -362,6 +444,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
         order: order,
         orderId: widget.orderId,
         clientSecret: widget.clientSecret,
+        viewStrings: widget.strings,
       );
     } finally {
       setCardFormProcessing(_card, false);
@@ -390,7 +473,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
         // A payment that reached a status, or an order that can no longer
         // be paid: the order is not paid again from this view.
         if (result is! PayriffResultFailed) _finished = true;
-        if (orderEnded) _error = error.message;
+        if (orderEnded) _error = error;
         if (deviceRefused) _deviceRefused = true;
       });
     }
@@ -404,9 +487,15 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   Widget build(BuildContext context) {
     final PayriffPaymentViewStyle style = widget.style;
     final bool dark = payriffIsDark(context);
-    final PayriffLanguage language =
-        widget.language ?? Payriff.config?.language ?? deviceLanguage();
-    final PayriffCardStrings strings = PayriffCardStrings(language);
+    final PayriffLanguage language = effectiveLanguage(
+      widget.language,
+      Payriff.config,
+    );
+    // CONTRACT §18.6: the view's texts, then the config's, then the SDK's.
+    final PayriffCardStrings strings = PayriffCardStrings(
+      language,
+      overrides: <PayriffStrings>[?widget.strings, ?Payriff.config?.strings],
+    );
     final CardFormLook formLook = CardFormLook(style.formStyle, dark: dark);
     final Color background =
         style.backgroundColor ??
@@ -420,12 +509,12 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     // CONTRACT §16.16 `view.deviceNotSupported` on a refused device; else
     // §16.14: an error message, or `view.notPayable` for an order that
     // loaded but cannot be paid by card.
+    final PayriffError? failure = _error;
     final String? error = _deviceRefused
         ? strings.deviceNotSupported
-        : _error ??
-              (order != null && !order.isPayableByCard
-                  ? strings.notPayable
-                  : null);
+        : failure != null
+        ? strings.errorLine(failure)
+        : (order != null && !order.isPayableByCard ? strings.notPayable : null);
     final WalletKind? wallet = _deviceRefused ? null : _wallet;
     final List<Widget> walletRow = wallet == null || order == null
         ? const <Widget>[]
@@ -452,10 +541,17 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
                     children: walletRow,
                   ),
           ),
-        PayriffCardForm(
-          controller: _card,
-          language: language,
-          style: style.formStyle,
+        // CONTRACT §18.2, §18.4, §18.6: the form falls back on the view's
+        // smoothing and badge border, and takes the view's texts.
+        PaymentViewScope(
+          cornerSmoothing: style.cornerSmoothing,
+          badgeBorderColor: style.badgeBorderColor,
+          strings: widget.strings,
+          child: PayriffCardForm(
+            controller: _card,
+            language: language,
+            style: style.formStyle,
+          ),
         ),
         const SizedBox(height: 24),
         ListenableBuilder(
@@ -466,6 +562,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
               strings,
               order,
               label: style.payButtonLabel,
+              title: style.payButtonTitle,
             ),
             enabled: _canPay,
             busy: _paying || _card.isProcessing,
@@ -475,8 +572,11 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
               fontSize: 16,
               fontWeight: FontWeight.w600,
             ).merge(style.buttonTextStyle),
+            disabledColor: style.buttonDisabledColor,
+            disabledTextColor: style.buttonDisabledTextColor,
             height: style.buttonHeight,
             cornerRadius: style.buttonCornerRadius,
+            cornerSmoothing: style.cornerSmoothing,
             onPressed: _pay,
           ),
         ),
@@ -496,7 +596,11 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
           ),
         if (style.showBadges) ...<Widget>[
           const SizedBox(height: 24),
-          const _Badges(key: paymentViewBadgesKey),
+          _Badges(
+            key: paymentViewBadgesKey,
+            borderColor: style.badgeBorderColor ?? paymentViewBadgeBorderColor,
+            cornerSmoothing: style.cornerSmoothing,
+          ),
         ],
         if (style.showSecureNote) ...<Widget>[
           SizedBox(height: style.showBadges ? 20 : 24),
@@ -521,52 +625,56 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
         : null;
 
     // A Material ancestor gives the text the app's font and no debug
-    // underline, also inside a CupertinoApp.
-    return Material(
-      type: MaterialType.transparency,
-      child: ColoredBox(
-        color: background,
-        child: LayoutBuilder(
-          builder: (BuildContext context, BoxConstraints constraints) {
-            // The safe area, and the keyboard when the parent leaves it in
-            // the view (a Scaffold that resizes for it removes it).
-            final EdgeInsets padding =
-                style.padding +
-                (MediaQuery.maybePaddingOf(context) ?? EdgeInsets.zero) +
-                EdgeInsets.only(
-                  bottom: MediaQuery.maybeViewInsetsOf(context)?.bottom ?? 0,
+    // underline, also inside a CupertinoApp. CONTRACT §18.7, §19.3: right to
+    // left in a right-to-left app, and in Arabic.
+    return Directionality(
+      textDirection: viewTextDirection(context, language),
+      child: Material(
+        type: MaterialType.transparency,
+        child: ColoredBox(
+          color: background,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              // The safe area, and the keyboard when the parent leaves it in
+              // the view (a Scaffold that resizes for it removes it).
+              final EdgeInsets padding =
+                  style.padding +
+                  (MediaQuery.maybePaddingOf(context) ?? EdgeInsets.zero) +
+                  EdgeInsets.only(
+                    bottom: MediaQuery.maybeViewInsetsOf(context)?.bottom ?? 0,
+                  );
+              if (!constraints.hasBoundedHeight) {
+                // Inside a parent that scrolls already.
+                return Padding(
+                  padding: padding,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[content, ?footer],
+                  ),
                 );
-            if (!constraints.hasBoundedHeight) {
-              // Inside a parent that scrolls already.
-              return Padding(
+              }
+              return SingleChildScrollView(
                 padding: padding,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[content, ?footer],
-                ),
-              );
-            }
-            return SingleChildScrollView(
-              padding: padding,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: math.max(
-                    0,
-                    constraints.maxHeight - padding.vertical,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: math.max(
+                      0,
+                      constraints.maxHeight - padding.vertical,
+                    ),
+                  ),
+                  // The footer goes to the bottom when there is room, else
+                  // 24 below the content.
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[content, ?footer],
                   ),
                 ),
-                // The footer goes to the bottom when there is room, else
-                // 24 below the content.
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: <Widget>[content, ?footer],
-                ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -683,6 +791,8 @@ class _WalletDivider extends StatelessWidget {
 
 /// The Pay button: full width, the brand colour, white title; 50% opacity
 /// while disabled, and a white spinner instead of the title while [busy].
+/// With [disabledColor] or [disabledTextColor] (CONTRACT §18.3) a disabled
+/// button is drawn in those colours at full opacity.
 class _PayButton extends StatefulWidget {
   const _PayButton({
     super.key,
@@ -691,8 +801,11 @@ class _PayButton extends StatefulWidget {
     required this.busy,
     required this.color,
     required this.textStyle,
+    required this.disabledColor,
+    required this.disabledTextColor,
     required this.height,
     required this.cornerRadius,
+    required this.cornerSmoothing,
     required this.onPressed,
   });
 
@@ -701,8 +814,11 @@ class _PayButton extends StatefulWidget {
   final bool busy;
   final Color color;
   final TextStyle textStyle;
+  final Color? disabledColor;
+  final Color? disabledTextColor;
   final double height;
   final double cornerRadius;
+  final double cornerSmoothing;
   final VoidCallback onPressed;
 
   @override
@@ -725,7 +841,19 @@ class _PayButtonState extends State<_PayButton> {
   Widget build(BuildContext context) {
     final bool enabled = widget.enabled && !widget.busy;
     if (!enabled) _pressed = false;
-    final Color foreground = widget.textStyle.color ?? const Color(0xFFFFFFFF);
+    // CONTRACT §18.3: the disabled colours, when set, replace the 50% opacity.
+    final bool disabledColors =
+        widget.disabledColor != null || widget.disabledTextColor != null;
+    final bool dimmed = !enabled && !disabledColors;
+    final Color background = enabled || !disabledColors
+        ? widget.color
+        : widget.disabledColor ?? widget.color;
+    final TextStyle textStyle = enabled || !disabledColors
+        ? widget.textStyle
+        : widget.textStyle.copyWith(
+            color: widget.disabledTextColor ?? widget.textStyle.color,
+          );
+    final Color foreground = textStyle.color ?? const Color(0xFFFFFFFF);
     final Widget child = widget.busy
         ? SizedBox.square(
             key: paymentViewSpinnerKey,
@@ -738,7 +866,7 @@ class _PayButtonState extends State<_PayButton> {
           )
         : Text(
             widget.title,
-            style: widget.textStyle,
+            style: textStyle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -769,11 +897,12 @@ class _PayButtonState extends State<_PayButton> {
           onTapCancel: enabled ? () => _setPressed(false) : null,
           onTap: enabled ? _activate : null,
           child: Opacity(
-            opacity: enabled ? (_pressed ? 0.8 : 1) : 0.5,
+            opacity: dimmed ? 0.5 : (_pressed ? 0.8 : 1),
             child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: widget.color,
-                borderRadius: BorderRadius.circular(widget.cornerRadius),
+              decoration: roundedRectDecoration(
+                color: background,
+                radius: widget.cornerRadius,
+                smoothing: widget.cornerSmoothing,
               ),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: widget.height),
@@ -819,24 +948,48 @@ class _Asset extends StatelessWidget {
   );
 }
 
-/// The accepted cards (CONTRACT §16.14): Mastercard and Visa, 28 high, 8
-/// apart, centred.
+/// The accepted cards (CONTRACT §16.14, §18.4): Mastercard and Visa, 28
+/// high, 8 apart, centred. Each badge is its mark in a frame drawn here: a
+/// 1-wide [borderColor] stroke with an outer radius of 4 and no fill.
 class _Badges extends StatelessWidget {
-  const _Badges({super.key});
+  const _Badges({
+    super.key,
+    required this.borderColor,
+    required this.cornerSmoothing,
+  });
+
+  final Color borderColor;
+  final double cornerSmoothing;
+
+  Widget _badge(String brand, String mark, double width, String label) =>
+      DecoratedBox(
+        key: paymentViewBadgeKey(brand),
+        decoration: roundedRectDecoration(
+          side: BorderSide(color: borderColor),
+          radius: 4,
+          smoothing: cornerSmoothing,
+        ),
+        child: _Asset(mark, width: width, height: 28, label: label),
+      );
 
   @override
-  Widget build(BuildContext context) => const Wrap(
+  Widget build(BuildContext context) => Wrap(
     alignment: WrapAlignment.center,
     spacing: 8,
     runSpacing: 8,
     children: <Widget>[
-      _Asset(
-        PaymentViewAssets.mastercard,
-        width: 43,
-        height: 28,
-        label: 'Mastercard',
+      _badge(
+        PayriffCardBrand.mastercard.value,
+        PaymentViewAssets.mastercardMark,
+        43,
+        'Mastercard',
       ),
-      _Asset(PaymentViewAssets.visa, width: 42, height: 28, label: 'Visa'),
+      _badge(
+        PayriffCardBrand.visa.value,
+        PaymentViewAssets.visaMark,
+        42,
+        'Visa',
+      ),
     ],
   );
 }
@@ -864,8 +1017,9 @@ class _SecureLine extends StatelessWidget {
   );
 }
 
-/// `view.poweredBy` with the Payriff logo where "Payriff" is, centred. The
-/// logo has a light wordmark in dark mode.
+/// `view.poweredBy` (or `PayriffStrings.poweredBy`) with the Payriff logo
+/// where "Payriff" is, or after the text without it, centred. The logo has a
+/// light wordmark in dark mode.
 class _PoweredBy extends StatelessWidget {
   const _PoweredBy({
     super.key,
@@ -880,32 +1034,31 @@ class _PoweredBy extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ({String before, String after})? parts = strings.poweredByParts;
+    // CONTRACT §18.6: a text without "Payriff" is followed by the logo.
+    final ({String before, String after}) parts = strings.poweredByParts;
     return Semantics(
       container: true,
-      label: strings.poweredBy,
+      label: '${parts.before}$payriffWordmark${parts.after}',
       excludeSemantics: true,
-      child: parts == null
-          ? Text(strings.poweredBy, style: style, textAlign: TextAlign.center)
-          : Text.rich(
-              TextSpan(
-                style: style,
-                children: <InlineSpan>[
-                  if (parts.before.isNotEmpty) TextSpan(text: parts.before),
-                  WidgetSpan(
-                    alignment: PlaceholderAlignment.middle,
-                    child: _Asset(
-                      PaymentViewAssets.footerLogo(dark: dark),
-                      width: 82,
-                      height: 16,
-                      label: payriffWordmark,
-                    ),
-                  ),
-                  if (parts.after.isNotEmpty) TextSpan(text: parts.after),
-                ],
+      child: Text.rich(
+        TextSpan(
+          style: style,
+          children: <InlineSpan>[
+            if (parts.before.isNotEmpty) TextSpan(text: parts.before),
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _Asset(
+                PaymentViewAssets.footerLogo(dark: dark),
+                width: 82,
+                height: 16,
+                label: payriffWordmark,
               ),
-              textAlign: TextAlign.center,
             ),
+            if (parts.after.isNotEmpty) TextSpan(text: parts.after),
+          ],
+        ),
+        textAlign: TextAlign.center,
+      ),
     );
   }
 }

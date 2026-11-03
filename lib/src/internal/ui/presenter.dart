@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../language.dart';
 import '../strings.dart';
 
 /// Key of the close confirmation's "continue payment" action.
@@ -69,10 +70,17 @@ final class SheetPresenter {
   final bool material;
 
   /// The UI strings.
-  final PayriffStrings strings;
+  final PayriffSheetStrings strings;
 
   Route<void>? _sheetRoute;
   final List<Route<Object?>> _dialogs = <Route<Object?>>[];
+
+  /// [child] laid out like the sheet (CONTRACT §19.3): right to left in a
+  /// right-to-left app and in Arabic.
+  Widget _directed(BuildContext context, Widget child) => Directionality(
+    textDirection: viewTextDirection(context, strings.language),
+    child: child,
+  );
 
   /// Builds the sheet route around [builder].
   ///
@@ -126,21 +134,24 @@ final class SheetPresenter {
               from: context,
               to: navigator.context,
             ),
-            builder: (BuildContext dialogContext) => AlertDialog(
-              title: Text(title),
-              content: Text(message),
-              actions: <Widget>[
-                TextButton(
-                  key: confirmNoKey,
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: Text(no),
-                ),
-                TextButton(
-                  key: confirmYesKey,
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: Text(yes),
-                ),
-              ],
+            builder: (BuildContext dialogContext) => _directed(
+              dialogContext,
+              AlertDialog(
+                title: Text(title),
+                content: Text(message),
+                actions: <Widget>[
+                  TextButton(
+                    key: confirmNoKey,
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: Text(no),
+                  ),
+                  TextButton(
+                    key: confirmYesKey,
+                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                    child: Text(yes),
+                  ),
+                ],
+              ),
             ),
           )
         : CupertinoDialogRoute<bool>(
@@ -299,10 +310,8 @@ final class SheetPresenter {
     }
   }
 
-  static Widget _withCupertinoLocalizations(
-    BuildContext context,
-    Widget child,
-  ) {
+  Widget _withCupertinoLocalizations(BuildContext context, Widget child) {
+    child = _directed(context, child);
     if (Localizations.of<CupertinoLocalizations>(
           context,
           CupertinoLocalizations,

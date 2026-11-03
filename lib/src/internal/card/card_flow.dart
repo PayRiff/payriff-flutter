@@ -34,11 +34,25 @@ const Duration cardPollInterval = Duration(milliseconds: 2500);
 /// Status polling timeout.
 const Duration cardPollTimeout = Duration(seconds: 120);
 
-/// The wait between `/three-ds` polls.
-const Duration threeDsPollInterval = Duration(seconds: 1);
+/// How long the hidden 3-D Secure Method WebViews may take to load their
+/// first page before `/three-ds` is called (CONTRACT §19.1 step 2).
+const Duration threeDsMethodLoadTimeout = Duration(seconds: 10);
 
-/// How many times `/three-ds` is polled.
-const int threeDsPollTries = 30;
+/// The timeout of a `GET /three-ds` after the 3-D Secure Method (§19.1
+/// step 3): the backend answers once the bank does.
+const Duration threeDsRequestTimeout = Duration(seconds: 60);
+
+/// How many times a `GET /three-ds` is retried after a network error or an
+/// HTTP 5xx (§19.1 step 3).
+const int threeDsRetries = 1;
+
+/// The wait between `/three-ds` calls while it answers `wait` (§19.1
+/// step 4).
+const Duration threeDsWaitInterval = Duration(seconds: 2);
+
+/// How long `wait` answers are followed, from the first answer (§19.1
+/// step 4).
+const Duration threeDsWaitLimit = Duration(seconds: 30);
 
 /// The statuses that end status polling (`card_api.json`).
 const Set<PayriffPaymentStatus> cardFinalStatuses = <PayriffPaymentStatus>{
@@ -168,7 +182,7 @@ final class ThreeDsSession extends ChangeNotifier {
   final String apiBaseUrl;
 
   /// The UI strings.
-  final PayriffStrings strings;
+  final PayriffSheetStrings strings;
 
   /// The sites this payment's WebViews loaded (CONTRACT §9.1a): the sheet
   /// records its pages here, the hidden 3-D Secure Method views theirs.
@@ -183,6 +197,8 @@ final class ThreeDsSession extends ChangeNotifier {
   ThreeDsRequest? _page;
   List<ThreeDsRequest> _hidden = const <ThreeDsRequest>[];
   int _hiddenGeneration = 0;
+  Set<int> _hiddenPending = <int>{};
+  Completer<void> _hiddenLoaded = Completer<void>()..complete();
   bool _pageLoadFailed = false;
   bool _pageLoaded = false;
   bool _finished = false;
@@ -259,11 +275,29 @@ final class ThreeDsSession extends ChangeNotifier {
     _host?.load(request);
   }
 
-  /// Runs [requests] in hidden WebViews (the 3-D Secure Method).
-  void showHidden(List<ThreeDsRequest> requests) {
+  /// Runs [requests] in hidden WebViews (the 3-D Secure Method). The
+  /// future completes once every one of them has finished loading its first
+  /// page, or failed to (CONTRACT §19.1 step 2).
+  Future<void> showHidden(List<ThreeDsRequest> requests) {
     _hidden = List<ThreeDsRequest>.unmodifiable(requests);
     _hiddenGeneration++;
+    _hiddenPending = <int>{for (int i = 0; i < requests.length; i++) i};
+    if (!_hiddenLoaded.isCompleted) _hiddenLoaded.complete();
+    _hiddenLoaded = Completer<void>();
+    if (_hiddenPending.isEmpty) _hiddenLoaded.complete();
     _notify();
+    return _hiddenLoaded.future;
+  }
+
+  /// Hidden WebView [index] of [generation] finished its first page, or
+  /// cannot load.
+  void onHiddenPageDone(int generation, int index) {
+    if (generation != _hiddenGeneration) return;
+    if (_hiddenPending.remove(index) &&
+        _hiddenPending.isEmpty &&
+        !_hiddenLoaded.isCompleted) {
+      _hiddenLoaded.complete();
+    }
   }
 
   /// Destroys the hidden WebViews.
@@ -271,6 +305,8 @@ final class ThreeDsSession extends ChangeNotifier {
     if (_hidden.isEmpty) return;
     _hidden = const <ThreeDsRequest>[];
     _hiddenGeneration++;
+    _hiddenPending = <int>{};
+    if (!_hiddenLoaded.isCompleted) _hiddenLoaded.complete();
     _notify();
   }
 
@@ -471,6 +507,59 @@ NavigationDecision decideHiddenNavigation(
   _ => NavigationDecision.prevent,
 };
 
+/// CONTRACT §19.1 step 1 (`card_next_action.json` → `methodSteps`): the
+/// hidden WebViews of [method]. The issuer's ACS runs only when both its URL
+/// and its data are set, with a POST of `threeDSMethodData`; the 3DS
+/// Server's runs when its URL is set, with an empty POST.
+List<ThreeDsRequest> threeDsMethodRequests(MethodAction method) {
+  final String? url = method.methodUrl;
+  final String? data = method.methodData;
+  final String? server = method.methodUrlServer;
+  return <ThreeDsRequest>[
+    if (url != null && data != null)
+      ThreeDsRequest.post(
+        Uri.parse(url),
+        utf8.encode(
+          formUrlEncode(<(String, String)>[('threeDSMethodData', data)]),
+        ),
+      ),
+    if (server != null) ThreeDsRequest.post(Uri.parse(server), Uint8List(0)),
+  ];
+}
+
+/// Whether a failed `GET /three-ds` after the 3-D Secure Method is retried
+/// (CONTRACT §19.1 step 3): no response (but not a refused certificate,
+/// which would be refused again), or an HTTP 5xx.
+bool isThreeDsRetryable(PayriffError error) {
+  final int? status = error.httpStatus;
+  return (error.code == PayriffErrorCode.networkError && error.isRetryable) ||
+      (status != null && status >= 500 && status < 600);
+}
+
+/// What follows the 3-D Secure Method (CONTRACT §19.1 step 5).
+enum ThreeDsMethodOutcome {
+  /// The bank's challenge page in the 3DS sheet.
+  challenge,
+
+  /// The redirect page in the 3DS sheet.
+  redirect,
+
+  /// Status polling.
+  statusPolling,
+}
+
+/// CONTRACT §19.1 step 5 (`card_next_action.json` → `afterMethod`): what
+/// follows the last `/three-ds` answer [next], or `null` for an error after
+/// the retry. A challenge with `accessUrl` or a redirect runs in the sheet;
+/// anything else, including another Method step (a challenge without
+/// `accessUrl`), a `wait` after the 30 s and an invalid answer, goes to
+/// status polling.
+ThreeDsMethodOutcome afterThreeDsMethod(NextAction? next) => switch (next) {
+  ChallengeAction() => ThreeDsMethodOutcome.challenge,
+  RedirectAction() => ThreeDsMethodOutcome.redirect,
+  _ => ThreeDsMethodOutcome.statusPolling,
+};
+
 /// A presented 3DS sheet.
 abstract interface class ThreeDsSheet {
   /// Closes the sheet if it is still shown.
@@ -519,7 +608,7 @@ final class CardPayment {
   final CardClock clock;
 
   /// The UI strings of the 3DS sheet.
-  final PayriffStrings strings;
+  final PayriffSheetStrings strings;
 
   final ThreeDsSheetOpener _openSheet;
   final SdkLogger _logger;
@@ -702,9 +791,11 @@ final class CardPayment {
       case RedirectAction(:final String url):
         return _runPage(ThreeDsRequest.get(Uri.parse(url)));
       case MethodAction():
-        return _runThreeDsLoop(action);
+        return _runThreeDsMethod(action);
       case WaitAction():
-        return _runThreeDsLoop(null);
+        // CONTRACT §19.1: a `wait` from `/pay` is followed like one from
+        // `/three-ds` (steps 4 and 5).
+        return _runThreeDsMethod(null);
       case CheckStatusAction():
         return _pollUntilDone();
       case InvalidAction():
@@ -719,51 +810,98 @@ final class CardPayment {
     }
   }
 
-  /// The 3-D Secure Method (hidden WebViews) and the `/three-ds` loop.
-  Future<PayriffResult> _runThreeDsLoop(MethodAction? method) async {
-    final String? methodUrl = method?.methodUrl;
-    final String? methodUrlServer = method?.methodUrlServer;
-    final List<ThreeDsRequest> hidden = <ThreeDsRequest>[
-      if (methodUrl != null)
-        ThreeDsRequest.post(
-          Uri.parse(methodUrl),
-          utf8.encode(
-            formUrlEncode(<(String, String)>[
-              ('threeDSMethodData', method?.methodData ?? ''),
-            ]),
-          ),
-        ),
-      if (methodUrlServer != null)
-        ThreeDsRequest.post(Uri.parse(methodUrlServer), Uint8List(0)),
-    ];
+  /// CONTRACT §19.1: the 3-D Secure Method of [method] (a `THREE_DS` step
+  /// without `accessUrl`) in hidden WebViews, then `/three-ds`; or, when
+  /// [method] is `null`, a `wait` from `/pay` (steps 4 and 5 only).
+  Future<PayriffResult> _runThreeDsMethod(MethodAction? method) async {
+    final List<ThreeDsRequest> hidden = method == null
+        ? const <ThreeDsRequest>[]
+        : threeDsMethodRequests(method);
     final ThreeDsSession? session = hidden.isEmpty
         ? _session
         : await _ensureSheetAfterGate();
-    session?.showHidden(hidden);
     try {
-      for (int i = 0; i < threeDsPollTries; i++) {
-        if (await _sleepUnlessClosed(threeDsPollInterval)) {
+      NextAction? next = const WaitAction();
+      if (method != null) {
+        // Steps 1 and 2: the hidden WebViews start back to back, and
+        // `/three-ds` waits until their first pages have loaded (or failed),
+        // at most 10 s: the bank needs the browser data first.
+        if (session != null && hidden.isNotEmpty) {
+          final Future<void> loaded = session.showHidden(hidden);
+          if (await _waitUnlessClosed(loaded, threeDsMethodLoadTimeout)) {
+            return await _closePath();
+          }
+        }
+        // Step 3.
+        final ({bool closed, NextAction? next}) first =
+            await _threeDsStepUnlessClosed();
+        if (first.closed) return await _closePath();
+        next = first.next;
+      }
+      // Step 4: `wait` is followed every 2 s, for at most 30 s from the
+      // first answer.
+      final DateTime firstAnswer = clock.now();
+      while (next is WaitAction &&
+          clock.now().difference(firstAnswer) + threeDsWaitInterval <=
+              threeDsWaitLimit) {
+        if (await _sleepUnlessClosed(threeDsWaitInterval)) {
           return await _closePath();
         }
-        final Map<String, Object?> payload;
-        try {
-          payload = await api.threeDs(orderId);
-        } on PayriffException catch (e) {
-          if (e.error.code == PayriffErrorCode.networkError) continue;
-          _logger.warning('/three-ds failed (${e.error.code.value})');
-          break;
-        }
-        if (_closeWasRequested) return await _closePath();
-        final NextAction next = classifyNextAction(payload);
-        // Only a step with something to do ends the loop.
-        if (next is WaitAction || next is MethodAction) continue;
-        session?.clearHidden();
-        return await _runAction(next);
+        final ({bool closed, NextAction? next}) answer =
+            await _threeDsStepUnlessClosed();
+        if (answer.closed) return await _closePath();
+        next = answer.next;
+      }
+      // Step 5: the hidden WebViews go; a challenge or a redirect runs in the
+      // sheet, anything else is decided by the status.
+      session?.clearHidden();
+      final NextAction? step = next;
+      switch (afterThreeDsMethod(step)) {
+        case ThreeDsMethodOutcome.challenge:
+        case ThreeDsMethodOutcome.redirect:
+          return await _runAction(step!);
+        case ThreeDsMethodOutcome.statusPolling:
+          _logger.info(
+            '3-D Secure Method: status polling '
+            '(${step == null ? 'no answer' : step.runtimeType})',
+          );
+          return await _pollUntilDone();
       }
     } finally {
       session?.clearHidden();
     }
-    return _pollUntilDone();
+  }
+
+  /// CONTRACT §19.1 step 3: one `GET /three-ds` with the 60 s timeout; a
+  /// network error or an HTTP 5xx is retried once. `next` is `null` after an
+  /// error. `closed` when the customer closed the sheet meanwhile.
+  Future<({bool closed, NextAction? next})> _threeDsStepUnlessClosed() async {
+    final ThreeDsSession? session = _sheet == null ? null : _session;
+    if (session == null) return (closed: false, next: await _threeDsStep());
+    if (_closeWasRequested) return (closed: true, next: null);
+    return Future.any(<Future<({bool closed, NextAction? next})>>[
+      _threeDsStep().then(
+        (NextAction? next) => (closed: _closeWasRequested, next: next),
+      ),
+      session.closeRequested.then((_) => (closed: true, next: null)),
+    ]);
+  }
+
+  Future<NextAction?> _threeDsStep() async {
+    for (int attempt = 0; ; attempt++) {
+      try {
+        return classifyNextAction(
+          await api.threeDs(orderId, timeout: threeDsRequestTimeout),
+        );
+      } on PayriffException catch (e) {
+        if (attempt < threeDsRetries && isThreeDsRetryable(e.error)) {
+          _logger.info('/three-ds failed (${e.error.code.value}), retrying');
+          continue;
+        }
+        _logger.warning('/three-ds failed (${e.error.code.value})');
+        return null;
+      }
+    }
   }
 
   /// A bank page in the 3DS sheet (challenge or redirect).
@@ -896,6 +1034,18 @@ final class CardPayment {
   }
 
   bool get _closeWasRequested => _session?.isCloseRequested ?? false;
+
+  /// Waits for [done], at most [timeout]; `true` when the customer closed
+  /// the sheet first.
+  Future<bool> _waitUnlessClosed(Future<void> done, Duration timeout) {
+    final ThreeDsSession? session = _sheet == null ? null : _session;
+    if (_closeWasRequested) return Future<bool>.value(true);
+    return Future.any(<Future<bool>>[
+      done.then((_) => _closeWasRequested),
+      clock.sleep(timeout).then((_) => _closeWasRequested),
+      ?session?.closeRequested.then((_) => true),
+    ]);
+  }
 
   /// Sleeps [duration]; `true` when the customer closed the sheet first.
   Future<bool> _sleepUnlessClosed(Duration duration) async {
