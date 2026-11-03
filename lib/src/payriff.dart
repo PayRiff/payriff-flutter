@@ -74,7 +74,7 @@ Future<PayriffResult> confirmCardPaymentWithStrings(
 /// ```
 abstract final class Payriff {
   /// The version of this package.
-  static const String version = '1.0.0-rc.4';
+  static const String version = '1.0.0-rc.5';
 
   static PayriffConfig? _config;
 

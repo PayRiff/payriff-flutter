@@ -51,7 +51,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.4`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.5`).
 
 Then complete the [platform setup](#platform-setup).
 

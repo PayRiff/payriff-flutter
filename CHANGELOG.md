@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0-rc.5 - 2026-11-04
+
+### Fixed
+
+- iOS: the card holder field opened the name and phone pad (`TextInputType.name`), which ignores auto-capitalization, so the keyboard showed lower case while the field upper-cased the text. It now opens the default keyboard in caps mode (CONTRACT §16.4). Android is unchanged.
+
 ## 1.0.0-rc.4 - 2026-11-04
 
 ### Added

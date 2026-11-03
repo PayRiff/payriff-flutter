@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -40,6 +41,11 @@ const String cardInformationSection = 'card';
 /// Key of a section's outlined box: [cardInformationSection] or, for the
 /// holder and every field of the stacked layout, the field's name.
 Key cardBoxKey(String section) => ValueKey<String>('payriff.card.box.$section');
+
+/// The holder field's keyboard. On iOS `TextInputType.name` opens the name–phone pad, which ignores
+/// auto-capitalization, so the caps keyboard of CONTRACT §16.4 needs the default keyboard there.
+TextInputType holderKeyboardType(TargetPlatform platform) =>
+    platform == TargetPlatform.iOS ? TextInputType.text : TextInputType.name;
 
 /// Key of the label above a section's box.
 Key cardLabelKey(String section) => ValueKey<String>('payriff.card.label.$section');
@@ -740,7 +746,7 @@ class _PayriffCardFormState extends State<PayriffCardForm> {
       onChanged: (String text) => _onChanged(field, text),
       onSubmitted: last ? null : (_) => _focusNext(field),
       textInputAction: last ? TextInputAction.done : TextInputAction.next,
-      keyboardType: field == PayriffCardField.holder ? TextInputType.name : TextInputType.number,
+      keyboardType: field == PayriffCardField.holder ? holderKeyboardType(defaultTargetPlatform) : TextInputType.number,
       textCapitalization: field == PayriffCardField.holder ? TextCapitalization.characters : TextCapitalization.none,
       inputFormatters: switch (field) {
         PayriffCardField.number => <TextInputFormatter>[CardInputFormatter(CardFormatKind.number)],

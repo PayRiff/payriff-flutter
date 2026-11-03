@@ -1,5 +1,6 @@
 // CONTRACT §16.4 and §16.5: the native card form.
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +75,33 @@ void main() {
       AutofillContextAction.cancel,
     );
   });
+
+  test('holder keyboard: the default keyboard on iOS, whose name-phone pad '
+      'ignores caps (§16.4)', () {
+    expect(holderKeyboardType(TargetPlatform.iOS), TextInputType.text);
+    expect(holderKeyboardType(TargetPlatform.android), TextInputType.name);
+  });
+
+  for (final TargetPlatform platform in <TargetPlatform>[
+    TargetPlatform.iOS,
+    TargetPlatform.android,
+  ]) {
+    testWidgets('holder opens the caps keyboard on ${platform.name} (§16.4)', (
+      WidgetTester tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = platform;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      NativeCalls().install();
+      final PayriffCardController controller = PayriffCardController();
+      addTearDown(controller.dispose);
+      await pumpCardApp(tester, controller);
+
+      final TextField holder = _field(tester, cardHolderFieldKey);
+      expect(holder.keyboardType, holderKeyboardType(platform));
+      expect(holder.textCapitalization, TextCapitalization.characters);
+      debugDefaultTargetPlatformOverride = null;
+    });
+  }
 
   testWidgets('keyboard copy and cut do nothing on the number', (
     WidgetTester tester,
