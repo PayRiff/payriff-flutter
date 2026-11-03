@@ -186,8 +186,8 @@ void main() {
   });
 
   group('models', () {
-    test('PayriffConfig has only the card-flow settings and hides the '
-        'publishable key (CONTRACT §11)', () {
+    test('PayriffConfig has only the card-flow and wallet settings and '
+        'hides the publishable key (CONTRACT §11, §17.2)', () {
       const PayriffConfig config = PayriffConfig(
         publishableKey: ' pr_pk_live_SECRETISH ',
         environment: PayriffEnvironment.sandbox,
@@ -200,8 +200,11 @@ void main() {
         config.toString(),
         'PayriffConfig(environment: sandbox, region: sa, language: AZ, '
         'enableLogging: true, allowCompromisedDevices: true, '
-        'publishableKey: ***(20))',
+        'applePay: null, googlePay: null, publishableKey: ***(20))',
       );
+      // CONTRACT §17.2: wallets are off unless set.
+      expect(config.applePay, isNull);
+      expect(config.googlePay, isNull);
       expect(config.toString(), isNot(contains('SECRETISH')));
       const PayriffConfig defaults = PayriffConfig();
       expect(defaults.environment, PayriffEnvironment.production);
@@ -277,6 +280,8 @@ void main() {
           'PAYMENT_FAILED',
           'UNEXPECTED_RESPONSE',
           'DEVICE_COMPROMISED',
+          // CONTRACT §17.11: Apple Pay and Google Pay.
+          'WALLET_FAILED',
           // The shared result shape (result_json.json).
           'API_ERROR',
           'NETWORK_ERROR',
@@ -711,6 +716,63 @@ void main() {
         );
       },
     );
+
+    test('an invalid Apple Pay configuration logs one warning and leaves '
+        'the rest of the configuration alone (CONTRACT §17.2)', () async {
+      final List<PayriffLogEntry> entries = <PayriffLogEntry>[];
+      final StreamSubscription<PayriffLogEntry> subscription = Payriff.logStream
+          .listen(entries.add);
+      addTearDown(subscription.cancel);
+      for (final (String id, String reason) in <(String, String)>[
+        (
+          'com.example.shop',
+          'merchantIdentifier must be an Apple Pay merchant ID, for example '
+              'merchant.com.example.shop',
+        ),
+        ('  ', 'merchantIdentifier is empty'),
+        (
+          'merchant.com.exa mple',
+          'merchantIdentifier contains white space or a control character',
+        ),
+      ]) {
+        entries.clear();
+        Payriff.configure(
+          PayriffConfig(
+            publishableKey: 'pr_pk_live_TEST',
+            enableLogging: true,
+            applePay: PayriffApplePayConfig(merchantIdentifier: id),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          entries
+              .where((PayriffLogEntry e) => e.level == PayriffLogLevel.warning)
+              .map((PayriffLogEntry e) => e.message),
+          <String>[
+            'Invalid Apple Pay configuration: $reason; Apple Pay is off.',
+          ],
+        );
+      }
+      // A valid one, and Google Pay, log no warning.
+      entries.clear();
+      Payriff.configure(
+        const PayriffConfig(
+          publishableKey: 'pr_pk_live_TEST',
+          enableLogging: true,
+          applePay: PayriffApplePayConfig(
+            merchantIdentifier: 'merchant.com.example.shop',
+          ),
+          googlePay: PayriffGooglePayConfig(merchantId: '  '),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        entries.where(
+          (PayriffLogEntry e) => e.level == PayriffLogLevel.warning,
+        ),
+        isEmpty,
+      );
+    });
 
     test('every call needs configure first: NOT_CONFIGURED', () async {
       await expectLater(

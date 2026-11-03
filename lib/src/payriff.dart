@@ -16,10 +16,12 @@ import 'internal/card/device_integrity.dart';
 import 'internal/language.dart';
 import 'internal/logger.dart';
 import 'internal/native_bridge.dart';
+import 'internal/payment_support.dart';
 import 'internal/request.dart';
 import 'internal/strings.dart';
 import 'internal/ui/presenter.dart';
-import 'internal/ui/sheet.dart';
+import 'internal/ui/three_ds_presentation.dart';
+import 'internal/wallet/wallet_rules.dart';
 import 'log.dart';
 import 'result.dart';
 
@@ -34,6 +36,10 @@ import 'result.dart';
 /// 4. Handle the returned [PayriffResult]. Only [PayriffResultSuccess] is
 ///    shown as paid; your server fulfils the order once it has confirmed the
 ///    payment with Payriff.
+///
+/// `PayriffPaymentView` does all of this for you, and adds Apple Pay or
+/// Google Pay above the card form when `PayriffConfig.applePay` or
+/// `PayriffConfig.googlePay` is set.
 ///
 /// ```dart
 /// Payriff.configure(const PayriffConfig(
@@ -50,16 +56,17 @@ import 'result.dart';
 /// ```
 abstract final class Payriff {
   /// The version of this package.
-  static const String version = '1.0.0-rc.2';
+  static const String version = '1.0.0-rc.3';
 
   static PayriffConfig? _config;
-  static bool _cardPaymentActive = false;
 
   /// The configuration passed to [configure], or `null`.
   static PayriffConfig? get config => _config;
 
-  /// Whether [confirmCardPayment] is running.
-  static bool get isPaymentInProgress => _cardPaymentActive;
+  /// Whether a payment is running: [confirmCardPayment], or an Apple Pay or
+  /// Google Pay payment of `PayriffPaymentView`, `PayriffApplePayButton` or
+  /// `PayriffGooglePayButton`. Only one runs at a time.
+  static bool get isPaymentInProgress => paymentInProgress;
 
   /// SDK log entries, emitted while `PayriffConfig.enableLogging` is on.
   ///
@@ -76,7 +83,10 @@ abstract final class Payriff {
   /// calls fail with [PayriffErrorCode.invalidConfig]. Outside debug builds
   /// `PayriffConfig.allowCompromisedDevices` is ignored, with a warning.
   /// [PayriffRegion.sa] with [PayriffEnvironment.sandbox] logs a warning:
-  /// that region has no sandbox, so its payments charge real cards.
+  /// that region has no sandbox, so its payments charge real cards. An
+  /// invalid `PayriffConfig.applePay` is logged as a warning
+  /// (`Invalid Apple Pay configuration: …`) and leaves Apple Pay off; card
+  /// payments are not affected.
   static void configure(PayriffConfig config) {
     _config = config;
     final SdkLogger logger = _loggerFor(config);
@@ -105,6 +115,17 @@ abstract final class Payriff {
       logger.warning(
         '$allowCompromisedDevicesIgnored: card payments are refused on '
         'compromised devices.',
+      );
+    }
+    // CONTRACT §17.2: an invalid wallet configuration leaves that wallet off
+    // and nothing else.
+    final PayriffApplePayConfig? applePay = config.applePay;
+    final String? applePayProblem = applePay == null
+        ? null
+        : applePayConfigProblem(applePay);
+    if (applePayProblem != null) {
+      logger.warning(
+        'Invalid Apple Pay configuration: $applePayProblem; Apple Pay is off.',
       );
     }
   }
@@ -148,12 +169,7 @@ abstract final class Payriff {
     required String clientSecret,
   }) async {
     if (isPaymentInProgress) {
-      return const PayriffResultFailed(
-        error: PayriffError(
-          code: PayriffErrorCode.paymentInProgress,
-          message: 'Another Payriff payment is already running.',
-        ),
-      );
+      return const PayriffResultFailed(error: paymentInProgressError);
     }
     final PayriffConfig? config = _config;
     if (config == null) {
@@ -164,10 +180,12 @@ abstract final class Payriff {
       );
     }
     final String? publishableKey = usablePublishableKey(config.publishableKey);
-    if (publishableKey == null) return PayriffResultFailed(error: _keyError());
+    if (publishableKey == null) {
+      return PayriffResultFailed(error: publishableKeyError());
+    }
     final String id = orderId.trim();
     final String? secret = usableClientSecret(clientSecret);
-    final PayriffError? argumentError = _cardArgumentError(id, secret);
+    final PayriffError? argumentError = orderArgumentError(id, secret);
     if (argumentError != null) {
       return PayriffResultFailed(error: argumentError);
     }
@@ -175,14 +193,7 @@ abstract final class Payriff {
         ? Navigator.maybeOf(context, rootNavigator: true)
         : null;
     if (navigator == null) {
-      return const PayriffResultFailed(
-        error: PayriffError(
-          code: PayriffErrorCode.presentationFailed,
-          message:
-              'No Navigator was found above the BuildContext. Pass a context '
-              'from a widget inside your MaterialApp or CupertinoApp.',
-        ),
-      );
+      return const PayriffResultFailed(error: noNavigatorError);
     }
 
     // Step 1: validation, before any request.
@@ -219,7 +230,7 @@ abstract final class Payriff {
     final String apiBaseUrl = config.apiBaseUrl;
     // Claimed before the first await, so a second tap cannot start another
     // payment.
-    _cardPaymentActive = true;
+    paymentInProgress = true;
     setCardFormProcessing(controller, true);
     bool submitted = false;
     ClientApi? api;
@@ -252,7 +263,7 @@ abstract final class Payriff {
           logger: logger,
           onSubmitted: () => submitted = true,
           checkDevice: () => checkDevice('card encryption'),
-          openSheet: (ThreeDsSession session) => _openThreeDsSheet(
+          openSheet: (ThreeDsSession session) => presentThreeDsSheet(
             context.mounted ? context : navigator.context,
             navigator,
             material,
@@ -265,7 +276,7 @@ abstract final class Payriff {
         result = await payment.run(card);
       }
     } finally {
-      _cardPaymentActive = false;
+      paymentInProgress = false;
       api?.close();
       setCardFormProcessing(controller, false);
     }
@@ -308,10 +319,10 @@ abstract final class Payriff {
       );
     }
     final String? publishableKey = usablePublishableKey(config.publishableKey);
-    if (publishableKey == null) throw PayriffException(_keyError());
+    if (publishableKey == null) throw PayriffException(publishableKeyError());
     final String id = orderId.trim();
     final String? secret = usableClientSecret(clientSecret);
-    final PayriffError? argumentError = _cardArgumentError(id, secret);
+    final PayriffError? argumentError = orderArgumentError(id, secret);
     if (argumentError != null) throw PayriffException(argumentError);
     final ClientApi api = ClientApi(
       baseUrl: config.apiBaseUrl,
@@ -349,70 +360,9 @@ abstract final class Payriff {
   @visibleForTesting
   static void debugReset() {
     _config = null;
-    _cardPaymentActive = false;
+    paymentInProgress = false;
     NativeBridge.resetCache();
   }
 
-  static PayriffError _keyError() => invalidConfig(
-    'The card flow needs PayriffConfig.publishableKey: the publishable key '
-    '(pr_pk_live_…) of your Payriff application, never the secret key.',
-  );
-
-  static PayriffError? _cardArgumentError(String orderId, String? secret) {
-    if (orderId.isEmpty || orderId == '.' || orderId == '..') {
-      return invalidOrder('orderId must be the Payriff order id.');
-    }
-    if (secret == null) {
-      // Never echo the value.
-      return invalidOrder(
-        'clientSecret must be the order\'s client secret (pr_cs_…) from '
-        'your server.',
-      );
-    }
-    return null;
-  }
-
-  static ThreeDsSheet? _openThreeDsSheet(
-    BuildContext context,
-    NavigatorState navigator,
-    bool material,
-    PayriffStrings strings,
-    SdkLogger logger,
-    ThreeDsSession session,
-  ) {
-    if (!navigator.mounted) return null;
-    final SheetPresenter presenter = SheetPresenter(
-      navigator: navigator,
-      material: material,
-      strings: strings,
-    );
-    try {
-      final Route<void> route = presenter.buildSheetRoute(
-        context,
-        (BuildContext context) => PayriffThreeDsSheet(
-          session: session,
-          presenter: presenter,
-          logger: logger,
-        ),
-      );
-      unawaited(
-        navigator.push<void>(route).whenComplete(session.onSheetDismissed),
-      );
-    } on Object catch (e) {
-      logger.error('Could not present the 3-D Secure sheet: ${redactError(e)}');
-      return null;
-    }
-    return _PresentedThreeDsSheet(presenter);
-  }
-
   static SdkLogger _loggerFor(PayriffConfig config) => sdkLoggerFor(config);
-}
-
-final class _PresentedThreeDsSheet implements ThreeDsSheet {
-  _PresentedThreeDsSheet(this._presenter);
-
-  final SheetPresenter _presenter;
-
-  @override
-  void close() => _presenter.closeSheet();
 }

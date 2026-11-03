@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
+import '../wallet/wallet_button_style.dart';
 import 'card_form_style.dart';
 
-/// The look of `PayriffPaymentView` (CONTRACT §16.14).
+/// The look of `PayriffPaymentView` (CONTRACT §16.14, §17.9).
 ///
 /// Every property is optional. The defaults reproduce the card part of
 /// Payriff's hosted payment page (pay.payriff.com) in the system font, and
@@ -40,6 +41,10 @@ final class PayriffPaymentViewStyle {
     this.secureNoteText,
     this.showPoweredBy = true,
     this.formStyle = const PayriffCardFormStyle(),
+    this.applePayButton = const PayriffApplePayButtonStyle(),
+    this.googlePayButton = const PayriffGooglePayButtonStyle(),
+    this.walletDividerText,
+    this.showWalletDivider = true,
   }) : assert(buttonHeight >= 0),
        assert(buttonCornerRadius >= 0);
 
@@ -94,8 +99,32 @@ final class PayriffPaymentViewStyle {
   final bool showPoweredBy;
 
   /// The look of the card form inside the view. Its error colour and error
-  /// text style are also used for the view's error line.
+  /// text style are also used for the view's error line, and its border
+  /// colour for the lines of the wallet divider.
   final PayriffCardFormStyle formStyle;
+
+  /// The Apple Pay button above the card form, on iOS when
+  /// `PayriffConfig.applePay` is set and Apple Pay is offered for the order.
+  /// Its `height` and `cornerRadius` default to [buttonHeight] and
+  /// [buttonCornerRadius].
+  final PayriffApplePayButtonStyle applePayButton;
+
+  /// The Google Pay button above the card form, on Android when
+  /// `PayriffConfig.googlePay` is set and Google Pay is offered for the
+  /// order. Its `height` and `cornerRadius` default to [buttonHeight] and
+  /// [buttonCornerRadius].
+  final PayriffGooglePayButtonStyle googlePayButton;
+
+  /// The text of the divider between the wallet button and the card form,
+  /// in place of "Or pay by card". It is shown as it is in every language,
+  /// without white space around it. `null` or blank: "Or pay by card" in the
+  /// view's language.
+  final String? walletDividerText;
+
+  /// Whether to show the divider ("Or pay by card", with a line on each
+  /// side) between the wallet button and the card form. Defaults to `true`.
+  /// Without it the form follows the wallet button 16 below.
+  final bool showWalletDivider;
 
   /// A copy with the given properties replaced.
   PayriffPaymentViewStyle copyWith({
@@ -112,6 +141,10 @@ final class PayriffPaymentViewStyle {
     String? secureNoteText,
     bool? showPoweredBy,
     PayriffCardFormStyle? formStyle,
+    PayriffApplePayButtonStyle? applePayButton,
+    PayriffGooglePayButtonStyle? googlePayButton,
+    String? walletDividerText,
+    bool? showWalletDivider,
   }) => PayriffPaymentViewStyle(
     backgroundColor: backgroundColor ?? this.backgroundColor,
     padding: padding ?? this.padding,
@@ -126,6 +159,10 @@ final class PayriffPaymentViewStyle {
     secureNoteText: secureNoteText ?? this.secureNoteText,
     showPoweredBy: showPoweredBy ?? this.showPoweredBy,
     formStyle: formStyle ?? this.formStyle,
+    applePayButton: applePayButton ?? this.applePayButton,
+    googlePayButton: googlePayButton ?? this.googlePayButton,
+    walletDividerText: walletDividerText ?? this.walletDividerText,
+    showWalletDivider: showWalletDivider ?? this.showWalletDivider,
   );
 
   @override
@@ -143,7 +180,11 @@ final class PayriffPaymentViewStyle {
       other.showSecureNote == showSecureNote &&
       other.secureNoteText == secureNoteText &&
       other.showPoweredBy == showPoweredBy &&
-      other.formStyle == formStyle;
+      other.formStyle == formStyle &&
+      other.applePayButton == applePayButton &&
+      other.googlePayButton == googlePayButton &&
+      other.walletDividerText == walletDividerText &&
+      other.showWalletDivider == showWalletDivider;
 
   @override
   int get hashCode => Object.hash(
@@ -160,5 +201,9 @@ final class PayriffPaymentViewStyle {
     secureNoteText,
     showPoweredBy,
     formStyle,
+    applePayButton,
+    googlePayButton,
+    walletDividerText,
+    showWalletDivider,
   );
 }

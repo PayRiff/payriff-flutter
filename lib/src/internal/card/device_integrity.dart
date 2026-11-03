@@ -53,8 +53,10 @@ Future<DeviceIntegrityReport> deviceIntegrityReport() async =>
 
 /// Checks the device at [point] of a payment: when the payment view
 /// appears, when `confirmCardPayment` starts and right before the card is
-/// encrypted. Returns [deviceCompromisedError] when the payment must stop,
-/// otherwise `null`.
+/// encrypted; for wallets (CONTRACT §17.11) when the view or the button
+/// appears, on tap and right before `/pay`. Returns
+/// [deviceCompromisedError] when the payment must stop, otherwise `null`.
+/// [payments] names what is refused in the warning.
 ///
 /// Every call asks the plugin again, so a hooking tool or a debugger that
 /// attached after an earlier point is found. On a compromised device a
@@ -68,6 +70,7 @@ Future<PayriffError?> deviceIntegrityError({
   required bool allowCompromisedDevices,
   required SdkLogger logger,
   required String point,
+  String payments = 'card payments',
 }) async {
   final DeviceIntegrityReport report = await deviceIntegrityReport();
   if (!report.compromised) return null;
@@ -82,7 +85,7 @@ Future<PayriffError?> deviceIntegrityError({
     return null;
   }
   logger.warning(
-    'Compromised device ($signals) at $point: card payments are refused'
+    'Compromised device ($signals) at $point: $payments are refused'
     '${allowCompromisedDevices ? ' ($allowCompromisedDevicesIgnored)' : ''}',
   );
   return deviceCompromisedError;

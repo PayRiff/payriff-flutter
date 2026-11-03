@@ -51,6 +51,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'notPayable': 'Bu sifarişi kartla ödəmək mümkün deyil',
           'deviceNotSupported':
               'Təhlükəsizlik səbəbilə bu cihazda kartla ödəniş mümkün deyil',
+          'orPayByCard': 'Və ya kartla ödəyin',
         },
       },
       'en': <String, Map<String, String>>{
@@ -96,6 +97,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'deviceNotSupported':
               "Card payments aren't available on this device for security "
               'reasons',
+          'orPayByCard': 'Or pay by card',
         },
       },
       'ru': <String, Map<String, String>>{
@@ -141,6 +143,7 @@ const Map<String, Map<String, Map<String, String>>> payriffCardStringTable =
           'deviceNotSupported':
               'По соображениям безопасности оплата картой на этом '
               'устройстве недоступна',
+          'orPayByCard': 'Или оплатите картой',
         },
       },
     };
@@ -190,6 +193,10 @@ final class PayriffCardStrings {
   /// refused (CONTRACT §16.16): "Card payments aren't available on this
   /// device for security reasons".
   String get deviceNotSupported => _table['view']!['deviceNotSupported']!;
+
+  /// The payment view's divider between the Apple Pay or Google Pay button
+  /// and the card form (CONTRACT §17.9): "Or pay by card".
+  String get orPayByCard => _table['view']!['orPayByCard']!;
 
   /// [poweredBy] split at "Payriff" (CONTRACT §16.14): the text before and
   /// after it, where the logo goes. `null` when the copy has no "Payriff".

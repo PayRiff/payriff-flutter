@@ -1,5 +1,6 @@
 import CryptoKit
 import Flutter
+import PassKit
 import Security
 import UIKit
 import XCTest
@@ -8,7 +9,7 @@ import XCTest
 
 /// Native tests of the payriff plugin: every case of `test/vectors/card_crypto.json`
 /// (CONTRACT §16.6), the external-URL rules (§7.5), the device integrity checks (§16.16) and the
-/// channel surface.
+/// channel surface. `ApplePayTests` below covers Apple Pay (§17.6, §17.10).
 final class RunnerTests: XCTestCase {
   private static let vectors: [String: Any] = {
     // RunnerTests.swift sits in example/ios/RunnerTests; the vectors are in the package's test/.
@@ -401,5 +402,253 @@ final class RunnerTests: XCTestCase {
     for call in ["images", "env DYLD_INSERT_LIBRARIES", "tcp 27042 0.1", "traced"] {
       XCTAssertTrue(probes.calls.contains(call), call)
     }
+  }
+}
+
+/// Apple Pay on the native side (CONTRACT §17.6, §17.10): the `PKPaymentRequest` built from what
+/// Dart sends (`wallet.json` → `applePayRequests`), the button mapping (`buttonStyles`) and the
+/// sheet session with a fake PassKit sheet: the handler is called exactly once, `.failure`
+/// dismisses at once, the 25 s safety net, and closing before an authorization.
+final class ApplePayTests: XCTestCase {
+  private static let vectors: [String: Any] = {
+    let url = URL(fileURLWithPath: #filePath)
+      .deletingLastPathComponent()  // RunnerTests
+      .deletingLastPathComponent()  // ios
+      .deletingLastPathComponent()  // example
+      .deletingLastPathComponent()  // package root
+      .appendingPathComponent("test/vectors/wallet.json")
+    let data = try! Data(contentsOf: url)
+    return try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+  }()
+
+  /// A sheet that records what the session asks of PassKit.
+  private final class FakeSheet: PayriffApplePaySheet {
+    var presented = true
+    var presents = 0
+    var dismissals: [() -> Void] = []
+
+    func present(_ completion: @escaping (Bool) -> Void) {
+      presents += 1
+      completion(presented)
+    }
+
+    func dismiss(_ completion: @escaping () -> Void) {
+      dismissals.append(completion)
+    }
+  }
+
+  private final class Clock {
+    var scheduled: [(TimeInterval, () -> Void)] = []
+    var cancelled = 0
+
+    func schedule(_ delay: TimeInterval, _ work: @escaping () -> Void) -> () -> Void {
+      scheduled.append((delay, work))
+      return { [weak self] in self?.cancelled += 1 }
+    }
+  }
+
+  private func session(_ sheet: FakeSheet, _ clock: Clock = Clock()) -> PayriffApplePaySession {
+    PayriffApplePaySession(makeSheet: { _ in sheet }, schedule: clock.schedule)
+  }
+
+  func testRequestsOfTheVectors() throws {
+    let cases = Self.vectors["applePayRequests"] as! [[String: Any]]
+    XCTAssertFalse(cases.isEmpty)
+    for item in cases {
+      // `expect` is exactly what Dart sends.
+      let expected = item["expect"] as! [String: Any]
+      let request = try XCTUnwrap(PayriffApplePayRequest.make(expected), "\(item["name"]!)")
+      XCTAssertEqual(request.merchantIdentifier, expected["merchantIdentifier"] as? String)
+      XCTAssertEqual(request.countryCode, expected["countryCode"] as? String)
+      XCTAssertEqual(request.currencyCode, expected["currencyCode"] as? String)
+      XCTAssertEqual(request.supportedNetworks, [.visa, .masterCard])
+      XCTAssertEqual(request.merchantCapabilities, .threeDSecure)
+      XCTAssertTrue(request.requiredShippingContactFields.isEmpty)
+      XCTAssertTrue(request.requiredBillingContactFields.isEmpty)
+      let summary = (expected["summaryItems"] as! [[String: Any]]).first!
+      let item = try XCTUnwrap(request.paymentSummaryItems.first)
+      XCTAssertEqual(request.paymentSummaryItems.count, 1)
+      XCTAssertEqual(item.label, summary["label"] as? String)
+      XCTAssertEqual(item.type, .final)
+      XCTAssertEqual(
+        item.amount,
+        NSDecimalNumber(string: summary["amount"] as? String, locale: Locale(identifier: "en_US_POSIX")))
+    }
+    // Decimal text in the POSIX locale only.
+    XCTAssertEqual(PayriffApplePayRequest.amount("10.50")?.stringValue, "10.5")
+    XCTAssertNil(PayriffApplePayRequest.amount("ten"))
+    var bad = (cases.first!["expect"] as! [String: Any])
+    bad["supportedNetworks"] = ["amex"]
+    XCTAssertNil(PayriffApplePayRequest.make(bad))
+  }
+
+  func testButtonTypesAndThemesOfTheVectors() {
+    let styles = (Self.vectors["buttonStyles"] as! [String: Any])["applePay"] as! [String: Any]
+    let types: [String: PKPaymentButtonType] = [
+      "plain": .plain, "buy": .buy, "checkout": .checkout, "book": .book, "donate": .donate,
+      "order": .order, "subscribe": .subscribe,
+    ]
+    for (_, native) in styles["types"] as! [String: String] {
+      XCTAssertEqual(PayriffApplePayButtonView.type(native), types[native], native)
+    }
+    let themes: [String: PKPaymentButtonStyle] = [
+      "automatic": .automatic, "black": .black, "white": .white, "whiteOutline": .whiteOutline,
+    ]
+    for (_, native) in styles["themes"] as! [String: String] {
+      XCTAssertEqual(PayriffApplePayButtonView.style(native), themes[native], native)
+    }
+    XCTAssertEqual(PayriffApplePayButtonView.type(nil), .plain)
+    XCTAssertEqual(PayriffApplePayButtonView.style(nil), .black)
+  }
+
+  func testSuccessCompletesTheHandlerOnceAndRepliesWhenTheSheetIsGone() {
+    let sheet = FakeSheet()
+    let clock = Clock()
+    let session = session(sheet, clock)
+    var presentReplies: [[String: Any]] = []
+    session.start { presentReplies.append($0 as! [String: Any]) }
+    XCTAssertEqual(sheet.presents, 1)
+
+    var statuses: [PKPaymentAuthorizationStatus] = []
+    session.authorized(paymentData: Data("{\"version\":\"EC_v1\"}".utf8)) { statuses.append($0) }
+    XCTAssertEqual(presentReplies.count, 1)
+    XCTAssertEqual(presentReplies[0]["event"] as? String, "authorized")
+    XCTAssertEqual(presentReplies[0]["paymentData"] as? String, "{\"version\":\"EC_v1\"}")
+    XCTAssertEqual(clock.scheduled.map(\.0), [PayriffApplePaySession.safetyNet])
+    XCTAssertEqual(PayriffApplePaySession.safetyNet, 25)
+
+    var completeReplies: [String] = []
+    session.complete(status: .success) {
+      completeReplies.append(($0 as! [String: Any])["status"] as! String)
+    }
+    XCTAssertEqual(statuses, [.success])
+    XCTAssertEqual(clock.cancelled, 1)
+    // PassKit shows its confirmation, then finishes; only then the sheet is dismissed.
+    XCTAssertTrue(sheet.dismissals.isEmpty)
+    XCTAssertTrue(completeReplies.isEmpty)
+    session.sheetDidFinish()
+    XCTAssertEqual(sheet.dismissals.count, 1)
+    sheet.dismissals[0]()
+    XCTAssertEqual(completeReplies, ["success"])
+    XCTAssertTrue(session.finished)
+
+    // Nothing calls the handler again.
+    clock.scheduled[0].1()
+    session.sheetDidFinish()
+    session.complete(status: .failure) {
+      completeReplies.append(($0 as! [String: Any])["status"] as! String)
+    }
+    XCTAssertEqual(statuses, [.success])
+    XCTAssertEqual(completeReplies, ["success", "success"])
+    XCTAssertEqual(presentReplies.count, 1)
+  }
+
+  func testFailureDismissesTheSheetAtOnce() {
+    let sheet = FakeSheet()
+    let session = session(sheet)
+    session.start { _ in }
+    var statuses: [PKPaymentAuthorizationStatus] = []
+    session.authorized(paymentData: Data("{}".utf8)) { statuses.append($0) }
+    var replies: [String] = []
+    session.complete(status: .failure) { replies.append(($0 as! [String: Any])["status"] as! String) }
+    XCTAssertEqual(statuses, [.failure])
+    XCTAssertEqual(sheet.dismissals.count, 1)
+    // PassKit may still report the finish; it changes nothing.
+    session.sheetDidFinish()
+    XCTAssertEqual(sheet.dismissals.count, 1)
+    sheet.dismissals[0]()
+    XCTAssertEqual(replies, ["failure"])
+    XCTAssertEqual(statuses, [.failure])
+  }
+
+  func testWithoutADecisionTheSafetyNetCompletesWithFailure() {
+    let sheet = FakeSheet()
+    let clock = Clock()
+    let session = session(sheet, clock)
+    session.start { _ in }
+    var statuses: [PKPaymentAuthorizationStatus] = []
+    session.authorized(paymentData: Data("{}".utf8)) { statuses.append($0) }
+    clock.scheduled[0].1()
+    XCTAssertEqual(statuses, [.failure])
+    XCTAssertEqual(sheet.dismissals.count, 1)
+    sheet.dismissals[0]()
+    // Dart's late decision gets the status the sheet got.
+    var replies: [String] = []
+    session.complete(status: .success) { replies.append(($0 as! [String: Any])["status"] as! String) }
+    XCTAssertEqual(replies, ["failure"])
+    XCTAssertEqual(statuses, [.failure])
+  }
+
+  func testASecondAuthorizationIsRefusedAtOnce() {
+    let session = session(FakeSheet())
+    session.start { _ in }
+    var first: [PKPaymentAuthorizationStatus] = []
+    var second: [PKPaymentAuthorizationStatus] = []
+    session.authorized(paymentData: Data("{}".utf8)) { first.append($0) }
+    session.authorized(paymentData: Data("{}".utf8)) { second.append($0) }
+    XCTAssertEqual(second, [.failure])
+    XCTAssertEqual(first, [])
+  }
+
+  func testClosingBeforeAnAuthorizationAndASheetThatCannotBeShown() {
+    let sheet = FakeSheet()
+    let session = session(sheet)
+    var replies: [[String: Any]] = []
+    session.start { replies.append($0 as! [String: Any]) }
+    session.sheetDidFinish()
+    XCTAssertEqual(replies.map { $0["event"] as? String }, ["closed"])
+    XCTAssertEqual(sheet.dismissals.count, 1)
+    sheet.dismissals[0]()
+    XCTAssertTrue(session.finished)
+
+    let hidden = FakeSheet()
+    hidden.presented = false
+    let refused = self.session(hidden)
+    var events: [String?] = []
+    refused.start { events.append(($0 as! [String: Any])["event"] as? String) }
+    XCTAssertEqual(events, ["notPresented"])
+    XCTAssertTrue(refused.finished)
+    XCTAssertTrue(hidden.dismissals.isEmpty)
+  }
+
+  func testPaymentDataThatIsNotUtf8IsSentAsNull() {
+    let session = session(FakeSheet())
+    var reply: [String: Any] = [:]
+    session.start { reply = $0 as! [String: Any] }
+    session.authorized(paymentData: Data([0xFF, 0xFE])) { _ in }
+    XCTAssertEqual(reply["event"] as? String, "authorized")
+    XCTAssertTrue(reply["paymentData"] is NSNull)
+  }
+
+  func testChannelSurface() {
+    let plugin = PayriffPlugin()
+    let name = expectation(description: "appName")
+    plugin.handle(FlutterMethodCall(methodName: "appName", arguments: nil)) { value in
+      XCTAssertEqual(value as? String, PayriffPlugin.appName())
+      name.fulfill()
+    }
+    let present = expectation(description: "applePayPresent refuses an invalid request")
+    plugin.handle(
+      FlutterMethodCall(methodName: "applePayPresent", arguments: ["merchantIdentifier": ""])
+    ) { value in
+      XCTAssertEqual((value as? [String: Any])?["event"] as? String, "notPresented")
+      present.fulfill()
+    }
+    let complete = expectation(description: "applePayComplete without a sheet")
+    plugin.handle(
+      FlutterMethodCall(methodName: "applePayComplete", arguments: ["status": "success"])
+    ) { value in
+      XCTAssertEqual((value as? [String: Any])?["status"] as? String, "failure")
+      complete.fulfill()
+    }
+    let canPay = expectation(description: "applePayCanMakePayments without networks")
+    plugin.handle(
+      FlutterMethodCall(
+        methodName: "applePayCanMakePayments", arguments: ["networks": [], "capabilities": []])
+    ) { value in
+      XCTAssertEqual(value as? Bool, false)
+      canPay.fulfill()
+    }
+    waitForExpectations(timeout: 5)
   }
 }

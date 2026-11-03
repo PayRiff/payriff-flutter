@@ -17,6 +17,7 @@ import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.PluginRegistry
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -32,13 +33,26 @@ import java.util.concurrent.Executors
  * - `deviceIntegrity` -> {compromised: bool, signals: [String]}: root, hooking and debugger
  *   checks (§16.16, [DeviceIntegrity]), run off the main thread; an error when they cannot
  *   complete, which the Dart side counts as a compromised device
+ * - `appName` -> the application label: the last fallback of the Google Pay sheet's merchant
+ *   name (§17.4)
+ * - `googlePayIsReady` and `googlePayLoad`: the Google Pay API (§17.5, [GooglePay])
  *
- * Nothing here logs. Error messages are fixed strings without input data.
+ * The platform view `payriff/google_pay_button` is Google's `PayButton` ([GooglePayButtonFactory],
+ * §17.10).
+ *
+ * Nothing here logs. Error messages are fixed strings without input data. The Google Pay token is
+ * only passed on to Dart.
  */
-class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+class PayriffPlugin :
+    FlutterPlugin,
+    MethodChannel.MethodCallHandler,
+    ActivityAware,
+    PluginRegistry.ActivityResultListener {
     private var channel: MethodChannel? = null
     private var applicationContext: Context? = null
     private var activity: Activity? = null
+    private var activityBinding: ActivityPluginBinding? = null
+    private val googlePay = GooglePay()
 
     /** Number of open `setSecure(true)` requests; protection is on while it is above zero. */
     private var secureCount = 0
@@ -51,6 +65,10 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
         channel = MethodChannel(binding.binaryMessenger, CHANNEL).also {
             it.setMethodCallHandler(this)
         }
+        binding.platformViewRegistry.registerViewFactory(
+            GooglePayButtonFactory.VIEW_TYPE,
+            GooglePayButtonFactory(binding.binaryMessenger),
+        )
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -63,22 +81,35 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        activityBinding = binding
+        binding.addActivityResultListener(this)
         applySecureFlag()
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
         releaseWindow()
-        activity = null
+        detachActivityBinding()
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
+        // A Google Pay sheet that is still open reports to the new activity.
         onAttachedToActivity(binding)
     }
 
     override fun onDetachedFromActivity() {
         releaseWindow()
+        detachActivityBinding()
+        googlePay.cancel()
+    }
+
+    private fun detachActivityBinding() {
+        activityBinding?.removeActivityResultListener(this)
+        activityBinding = null
         activity = null
     }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean =
+        googlePay.onActivityResult(requestCode, resultCode, data)
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         val args = call.arguments as? Map<*, *>
@@ -113,7 +144,34 @@ class PayriffPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 Handler(Looper.getMainLooper()).post { clearWebsiteData(origins, urls, result) }
             }
             "deviceIntegrity" -> deviceIntegrity(result)
+            "appName" -> result.success(appName())
+            "googlePayIsReady" ->
+                googlePay.isReady(
+                    activity,
+                    applicationContext,
+                    args?.get("environment") as? String,
+                    args?.get("request") as? String,
+                    result,
+                )
+            "googlePayLoad" ->
+                googlePay.load(
+                    activity,
+                    args?.get("environment") as? String,
+                    args?.get("request") as? String,
+                    result,
+                )
             else -> result.notImplemented()
+        }
+    }
+
+    /** The application label, trimmed; null when it has none. */
+    private fun appName(): String? {
+        val context = applicationContext ?: return null
+        return try {
+            context.applicationInfo.loadLabel(context.packageManager).toString().trim()
+                .ifEmpty { null }
+        } catch (e: Exception) {
+            null
         }
     }
 

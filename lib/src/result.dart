@@ -117,7 +117,8 @@ final class PayriffPayment {
   String toString() => 'PayriffPayment(${toJson()})';
 }
 
-/// The outcome of `Payriff.confirmCardPayment`.
+/// The outcome of a card payment (`Payriff.confirmCardPayment`) or an Apple
+/// Pay or Google Pay payment.
 ///
 /// Exactly one variant is returned per call, and payment outcomes are never
 /// thrown. Show **only** [PayriffResultSuccess] as paid in the app; for
@@ -288,8 +289,8 @@ final class PayriffResultPending extends PayriffResult {
 }
 
 /// The payment could not start or run: invalid configuration or arguments,
-/// an invalid card form, an order that cannot be paid, a Client API error,
-/// or another payment is in progress.
+/// an invalid card form, an order that cannot be paid, a wallet that failed,
+/// a Client API error, or another payment is in progress.
 final class PayriffResultFailed extends PayriffResult {
   /// Creates a failed result.
   const PayriffResultFailed({required this.error});

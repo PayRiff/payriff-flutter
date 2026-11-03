@@ -16,4 +16,11 @@
         <package android:name="de.robv.android.xposed.installer" />
         <package android:name="org.lsposed.manager" />
     </queries>
+
+    <application>
+        <!-- CONTRACT §17.5: Google Pay. Declared here, so apps need not. -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
+    </application>
 </manifest>

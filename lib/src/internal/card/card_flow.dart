@@ -1,7 +1,8 @@
 /// CONTRACT §16.7 and §16.8: `confirmCardPayment` after validation (load
 /// the order, encrypt, `/pay`, run `nextAction`, 3-D Secure, status
-/// polling), and the state of the 3DS sheet. No widgets: the sheet renders
-/// a [ThreeDsSession].
+/// polling), and the state of the 3DS sheet. Wallet payments (§17.5–§17.7)
+/// share everything from `/pay` on. No widgets: the sheet renders a
+/// [ThreeDsSession].
 library;
 
 import 'dart:async';
@@ -19,6 +20,7 @@ import '../native_bridge.dart';
 import '../status_resolution.dart';
 import '../strings.dart';
 import '../url_policy.dart';
+import '../wallet/wallet_rules.dart';
 import 'card_clock.dart';
 import 'card_crypto.dart';
 import 'client_api.dart';
@@ -482,9 +484,15 @@ typedef ThreeDsSheetOpener = ThreeDsSheet? Function(ThreeDsSession session);
 // The card payment
 
 /// One `confirmCardPayment` after the form validated (CONTRACT §16.7 steps
-/// 2–5).
+/// 2–5), or one wallet payment once the wallet returned its token (§17.5
+/// steps 4–5, §17.6 steps 2–3): `/pay`, `nextAction`, 3-D Secure and status
+/// polling are the same for both.
 final class CardPayment {
   /// Creates a payment of [orderId] through [api].
+  ///
+  /// [beforeSheet] runs once before the 3-D Secure sheet opens, and the
+  /// sheet opens when it completes: Apple Pay completes its own sheet with
+  /// `.success` there and waits until it is gone (§17.6).
   CardPayment({
     required this.api,
     required this.orderId,
@@ -494,10 +502,12 @@ final class CardPayment {
     SdkLogger? logger,
     void Function()? onSubmitted,
     Future<PayriffError?> Function()? checkDevice,
+    Future<void> Function()? beforeSheet,
   }) : _openSheet = openSheet,
        _logger = logger ?? SdkLogger.silent,
        _onSubmitted = onSubmitted,
-       _checkDevice = checkDevice;
+       _checkDevice = checkDevice,
+       _beforeSheet = beforeSheet;
 
   /// The Client API session.
   final ClientApi api;
@@ -519,6 +529,9 @@ final class CardPayment {
   /// an error stops the payment there.
   final Future<PayriffError?> Function()? _checkDevice;
 
+  /// Runs before the 3-D Secure sheet opens; cleared once it ran.
+  Future<void> Function()? _beforeSheet;
+
   ThreeDsSession? _session;
   ThreeDsSheet? _sheet;
   StatusReading? _last;
@@ -529,14 +542,32 @@ final class CardPayment {
   bool _sent = false;
 
   /// Runs the payment of [card]. Never throws.
-  Future<PayriffResult> run(CardPlaintext card) async {
+  Future<PayriffResult> run(CardPlaintext card) => _guarded(() => _run(card));
+
+  /// Pays with the [kind] wallet's [token] (CONTRACT §17.7): `/pay` with
+  /// `{"method":"APPLE_PAY"|"GOOGLE_PAY","encryptedMessage":"<token>"}`, no
+  /// `x-secret-key` and a new idempotency key, then `nextAction` and status
+  /// polling as for a card. The order was checked when the wallet was
+  /// offered, and the device right before this call. Never throws.
+  Future<PayriffResult> runWallet(WalletKind kind, String token) => _guarded(
+    () => _submit(
+      PayRequest(
+        body: walletPayBody(kind, token),
+        wrappedKey: null,
+        idempotencyKey: newIdempotencyKey(),
+      ),
+    ),
+  );
+
+  Future<PayriffResult> _guarded(Future<PayriffResult> Function() body) async {
     try {
-      return await _run(card);
+      return await body();
     } on Object catch (e) {
-      _logger.error('The card payment failed unexpectedly: ${e.runtimeType}');
+      _logger.error('The payment failed unexpectedly: ${e.runtimeType}');
       if (_sent) {
-        // The card was sent: as on a close, one status check decides and
-        // anything else is pending, never a failure (CONTRACT §16.0 item 3).
+        // The card or the wallet token was sent: as on a close, one status
+        // check decides and anything else is pending, never a failure
+        // (CONTRACT §16.0 item 3).
         try {
           return await _closePath();
         } on Object {
@@ -549,7 +580,7 @@ final class CardPayment {
       return const PayriffResultFailed(
         error: PayriffError(
           code: PayriffErrorCode.unknown,
-          message: 'The card payment failed unexpectedly.',
+          message: 'The payment failed unexpectedly.',
         ),
       );
     } finally {
@@ -631,11 +662,17 @@ final class CardPayment {
     } finally {
       zeroBytes(plaintext);
     }
-    final PayRequest request = PayRequest(
-      body: payBody(sealed.encryptedMessage),
-      wrappedKey: sealed.wrappedKey,
-      idempotencyKey: newIdempotencyKey(),
+    return _submit(
+      PayRequest(
+        body: payBody(sealed.encryptedMessage),
+        wrappedKey: sealed.wrappedKey,
+        idempotencyKey: newIdempotencyKey(),
+      ),
     );
+  }
+
+  /// Step 3's `/pay` and step 4. The body bytes are zeroed afterwards.
+  Future<PayriffResult> _submit(PayRequest request) async {
     _sent = true;
     _onSubmitted?.call();
     final Map<String, Object?> payload;
@@ -699,7 +736,9 @@ final class CardPayment {
       if (methodUrlServer != null)
         ThreeDsRequest.post(Uri.parse(methodUrlServer), Uint8List(0)),
     ];
-    final ThreeDsSession? session = hidden.isEmpty ? _session : _ensureSheet();
+    final ThreeDsSession? session = hidden.isEmpty
+        ? _session
+        : await _ensureSheetAfterGate();
     session?.showHidden(hidden);
     try {
       for (int i = 0; i < threeDsPollTries; i++) {
@@ -729,7 +768,7 @@ final class CardPayment {
 
   /// A bank page in the 3DS sheet (challenge or redirect).
   Future<PayriffResult> _runPage(ThreeDsRequest request) async {
-    final ThreeDsSession? session = _ensureSheet();
+    final ThreeDsSession? session = await _ensureSheetAfterGate();
     if (session == null) {
       _logger.error('The 3-D Secure sheet could not be shown');
       return _pollUntilDone();
@@ -870,6 +909,16 @@ final class CardPayment {
       clock.sleep(duration).then((_) => _closeWasRequested),
       session.closeRequested.then((_) => true),
     ]);
+  }
+
+  /// [_ensureSheet], after [_beforeSheet] when the sheet is not shown yet.
+  Future<ThreeDsSession?> _ensureSheetAfterGate() async {
+    final Future<void> Function()? gate = _beforeSheet;
+    if (gate != null && _sheet == null && !_sheetUnavailable) {
+      _beforeSheet = null;
+      await gate();
+    }
+    return _ensureSheet();
   }
 
   ThreeDsSession? _ensureSheet() {

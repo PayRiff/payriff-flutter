@@ -3,8 +3,8 @@ import 'package:payriff/payriff.dart';
 // Build-time defaults from example/config.json (git-ignored):
 //   flutter run --dart-define-from-file=config.json
 // Copy config.example.json to config.json and fill in the publishable key.
-// The app reads only these three keys. It has no secret key: orders come
-// from your server.
+// The app reads only the keys below. It has no secret key: orders come from
+// your server.
 const String _envEnvironment = String.fromEnvironment(
   'PAYRIFF_ENVIRONMENT',
   defaultValue: 'sandbox',
@@ -20,6 +20,21 @@ const String _envRegion = String.fromEnvironment(
 const String _envPublishableKey = String.fromEnvironment(
   'PAYRIFF_PUBLISHABLE_KEY',
 );
+// Apple Pay on iOS: your Apple Pay merchant ID (merchant.…). Empty leaves
+// Apple Pay off. The Runner target also needs the Apple Pay capability with
+// that merchant ID (see README.md).
+const String _envApplePayMerchantId = String.fromEnvironment(
+  'PAYRIFF_APPLE_PAY_MERCHANT_ID',
+);
+// Google Pay on Android: true or false.
+const String _envGooglePay = String.fromEnvironment(
+  'PAYRIFF_GOOGLE_PAY',
+  defaultValue: 'false',
+);
+// Optional: your merchant ID from the Google Pay & Wallet Console.
+const String _envGooglePayMerchantId = String.fromEnvironment(
+  'PAYRIFF_GOOGLE_PAY_MERCHANT_ID',
+);
 
 /// The settings of the example app, from `--dart-define-from-file`.
 class ExampleSettings {
@@ -29,6 +44,9 @@ class ExampleSettings {
     this.publishableKey = '',
     this.language,
     this.enableLogging = true,
+    this.applePayMerchantId = '',
+    this.googlePay = false,
+    this.googlePayMerchantId = '',
   });
 
   /// Defaults from `--dart-define-from-file=config.json`.
@@ -40,6 +58,9 @@ class ExampleSettings {
         ? PayriffRegion.sa
         : PayriffRegion.az,
     publishableKey: _envPublishableKey,
+    applePayMerchantId: _envApplePayMerchantId,
+    googlePay: _envGooglePay.trim().toLowerCase() == 'true',
+    googlePayMerchantId: _envGooglePayMerchantId,
   );
 
   PayriffEnvironment environment;
@@ -56,6 +77,15 @@ class ExampleSettings {
 
   bool enableLogging;
 
+  /// Your Apple Pay merchant ID; empty leaves Apple Pay off.
+  String applePayMerchantId;
+
+  /// Whether Google Pay is on.
+  bool googlePay;
+
+  /// Your Google Pay merchant ID; empty leaves it out of the request.
+  String googlePayMerchantId;
+
   bool get hasPublishableKey => publishableKey.trim().isNotEmpty;
 
   PayriffConfig toConfig() => PayriffConfig(
@@ -64,5 +94,15 @@ class ExampleSettings {
     region: region,
     language: language,
     enableLogging: enableLogging,
+    applePay: applePayMerchantId.trim().isEmpty
+        ? null
+        : PayriffApplePayConfig(merchantIdentifier: applePayMerchantId.trim()),
+    googlePay: googlePay
+        ? PayriffGooglePayConfig(
+            merchantId: googlePayMerchantId.trim().isEmpty
+                ? null
+                : googlePayMerchantId.trim(),
+          )
+        : null,
   );
 }

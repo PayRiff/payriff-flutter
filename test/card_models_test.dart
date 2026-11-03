@@ -14,6 +14,41 @@ void main() {
     expect(const PayriffConfig().toString(), contains('publishableKey: null'));
   });
 
+  test('PayriffConfig.toString shows the wallets; merchant IDs are not '
+      'secret (CONTRACT §17.2)', () {
+    expect(
+      const PayriffConfig().toString(),
+      allOf(contains('applePay: null'), contains('googlePay: null')),
+    );
+    const PayriffConfig wallets = PayriffConfig(
+      applePay: PayriffApplePayConfig(
+        merchantIdentifier: ' merchant.com.example.shop ',
+      ),
+      googlePay: PayriffGooglePayConfig(merchantId: 'BCR2DN4TABCDEF'),
+    );
+    expect(
+      wallets.toString(),
+      allOf(
+        contains('applePay: merchant.com.example.shop,'),
+        contains('googlePay: on'),
+      ),
+    );
+    expect(
+      const PayriffConfig(
+        applePay: PayriffApplePayConfig(merchantIdentifier: 'com.shop'),
+      ).toString(),
+      contains('applePay: invalid'),
+    );
+    expect(
+      const PayriffApplePayConfig(merchantIdentifier: 'merchant.a'),
+      const PayriffApplePayConfig(merchantIdentifier: 'merchant.a'),
+    );
+    expect(
+      const PayriffGooglePayConfig(merchantName: 'Shop'),
+      isNot(const PayriffGooglePayConfig()),
+    );
+  });
+
   test('PayriffError.isFatal and fields: equality, toString, §5.3 JSON', () {
     const PayriffError fatal = PayriffError(
       code: PayriffErrorCode.sessionExpired,
@@ -83,5 +118,53 @@ void main() {
     expect(order.paymentMethods, <String>['CARD']);
     expect(order.isPayableByCard, isTrue);
     expect(order.toJson()['status'], 'PENDING');
+    expect(order.applePay, isNull);
+    expect(order.googlePay, isNull);
+  });
+
+  test('PayriffClientOrder reads the wallet parts as the web SDK does '
+      '(CONTRACT §17.3)', () {
+    final PayriffClientOrder order = PayriffClientOrder.fromPayload(
+      <String, Object?>{
+        'status': 'CREATED',
+        'paymentMethods': <Object?>['GOOGLE_PAY', 'APPLE_PAY'],
+        'googlePay': <String, Object?>{
+          'gateway': 'payriff',
+          'gatewayMerchantId': 'BCR2DN4T',
+        },
+        'applePay': <String, Object?>{
+          'merchantIdentifier': 'merchant.com.payriff',
+        },
+      },
+      requestedOrderId: 'o9',
+    );
+    expect(
+      order.googlePay,
+      const PayriffClientOrderGooglePay(
+        gateway: 'payriff',
+        gatewayMerchantId: 'BCR2DN4T',
+      ),
+    );
+    expect(
+      order.applePay,
+      const PayriffClientOrderApplePay(
+        merchantIdentifier: 'merchant.com.payriff',
+      ),
+    );
+    expect(order.isPayableByCard, isFalse);
+    expect(order.toJson()['googlePay'], <String, Object?>{
+      'gateway': 'payriff',
+      'gatewayMerchantId': 'BCR2DN4T',
+    });
+    expect(order.toJson()['applePay'], <String, Object?>{
+      'merchantIdentifier': 'merchant.com.payriff',
+    });
+    // Anything but an object is no wallet part.
+    final PayriffClientOrder odd = PayriffClientOrder.fromPayload(
+      <String, Object?>{'googlePay': 'x', 'applePay': <Object?>[]},
+      requestedOrderId: 'o9',
+    );
+    expect(odd.googlePay, isNull);
+    expect(odd.applePay, isNull);
   });
 }

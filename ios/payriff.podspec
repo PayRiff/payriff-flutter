@@ -4,12 +4,13 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'payriff'
-  s.version          = '1.0.0-rc.2'
-  s.summary          = 'Payriff payments for Flutter: native card encryption, screen protection and device checks.'
+  s.version          = '1.0.0-rc.3'
+  s.summary          = 'Payriff payments for Flutter: native card encryption, Apple Pay, screen protection and device checks.'
   s.description      = <<-DESC
 Native half of the payriff Flutter plugin: card encryption (CryptoKit AES-GCM and
 RSA-OAEP-SHA256), the X-Client-App-Id value, screen protection, external launches,
-the removal of 3-D Secure website data and the jailbreak, hooking and debugger checks.
+the removal of 3-D Secure website data, the jailbreak, hooking and debugger checks,
+and Apple Pay (PassKit: the payment sheet and the PKPaymentButton platform view).
                        DESC
   s.homepage         = 'https://payriff.com'
   s.license          = { :file => '../LICENSE' }
@@ -19,7 +20,7 @@ the removal of 3-D Secure website data and the jailbreak, hooking and debugger c
   s.resource_bundles = { 'payriff_privacy' => ['payriff/Sources/payriff/PrivacyInfo.xcprivacy'] }
   s.dependency 'Flutter'
   s.platform = :ios, '13.0'
-  s.frameworks = 'CryptoKit', 'Security', 'UIKit', 'WebKit'
+  s.frameworks = 'CryptoKit', 'PassKit', 'Security', 'UIKit', 'WebKit'
 
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }

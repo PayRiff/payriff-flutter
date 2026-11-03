@@ -38,7 +38,7 @@ enum PayriffErrorCode {
 
   /// The order cannot be paid by card (already paid, not
   /// `CREATED` or `PENDING`, or `CARD` is not among its payment methods),
-  /// or the API answered HTTP 400.
+  /// or the API answered HTTP 400 to a card or wallet payment.
   orderNotPayable('ORDER_NOT_PAYABLE'),
 
   /// The API rejected the request format (HTTP 400 with code
@@ -60,6 +60,12 @@ enum PayriffErrorCode {
   /// ignored: it works only in debug builds). Nothing was sent. Not fatal:
   /// the order can still be paid on another device.
   deviceCompromised('DEVICE_COMPROMISED'),
+
+  /// Apple Pay or Google Pay failed (CONTRACT §17.11): its sheet could not
+  /// be shown, it reported an error, or it returned no payment token.
+  /// Nothing was sent to Payriff. Not retryable and not fatal: the order may
+  /// still be paid by card.
+  walletFailed('WALLET_FAILED'),
 
   /// Payriff answered with an error envelope (`code` other than `00000`).
   /// Part of the code set shared by all Payriff SDKs (CONTRACT §5.3); the
@@ -83,9 +89,10 @@ enum PayriffErrorCode {
 
 /// Describes why an SDK operation failed.
 ///
-/// Payment outcomes are never errors: `Payriff.confirmCardPayment` returns a
-/// `PayriffResult`. A [PayriffError] appears in `PayriffResultFailed` and
-/// inside the [PayriffException] thrown by `Payriff.retrieveOrder`.
+/// Payment outcomes are never errors: `Payriff.confirmCardPayment`, the
+/// payment view and the wallet buttons report a `PayriffResult`. A
+/// [PayriffError] appears in `PayriffResultFailed` and inside the
+/// [PayriffException] thrown by `Payriff.retrieveOrder`.
 @immutable
 final class PayriffError {
   /// Creates an error.

@@ -192,7 +192,7 @@ void main() {
           strings.cardInformation,
           (table['group']! as Map<String, Object?>)['cardInformation'],
         );
-        // The payment view's copy (CONTRACT §16.14, §16.16).
+        // The payment view's copy (CONTRACT §16.14, §16.16, §17.9).
         final Map<String, Object?> view =
             table['view']! as Map<String, Object?>;
         expect(view.keys.toSet(), <String>{
@@ -201,12 +201,14 @@ void main() {
           'poweredBy',
           'notPayable',
           'deviceNotSupported',
+          'orPayByCard',
         });
         expect(strings.pay, view['pay']);
         expect(strings.secure, view['secure']);
         expect(strings.poweredBy, view['poweredBy']);
         expect(strings.notPayable, view['notPayable']);
         expect(strings.deviceNotSupported, view['deviceNotSupported']);
+        expect(strings.orPayByCard, view['orPayByCard']);
         for (final PayriffCardField field in PayriffCardField.values) {
           final Map<String, Object?> messages =
               table[field.value]! as Map<String, Object?>;

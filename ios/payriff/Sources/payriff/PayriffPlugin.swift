@@ -1,4 +1,5 @@
 import Flutter
+import PassKit
 import UIKit
 import WebKit
 
@@ -14,8 +15,18 @@ import WebKit
 ///   data store's records (all types) of the sites a payment's 3-D Secure WebViews loaded (§9.1a).
 /// - `deviceIntegrity` -> {compromised: bool, signals: [String]}: jailbreak, hooking and debugger
 ///   checks (§16.16, `PayriffDeviceIntegrity`), run off the main thread.
+/// - `appName` -> `CFBundleDisplayName`, then `CFBundleName`: the last fallback of the Apple Pay
+///   sheet's merchant name (§17.4).
+/// - `applePayCanMakePayments` {networks, capabilities} -> bool (§17.3 item 4).
+/// - `applePayPresent` {request} -> {event: authorized, paymentData} | {event: closed} |
+///   {event: notPresented}, and `applePayComplete` {status} -> {status} once the sheet is gone
+///   (§17.6, `PayriffApplePaySession`).
 ///
-/// Nothing here logs. Error messages are fixed strings without input data.
+/// The platform view `payriff/apple_pay_button` is Apple's `PKPaymentButton`
+/// (`PayriffApplePayButtonFactory`, §17.10).
+///
+/// Nothing here logs. Error messages are fixed strings without input data. The Apple Pay token
+/// is only passed on to Dart.
 public final class PayriffPlugin: NSObject, FlutterPlugin {
   static let channelName = "payriff/native"
   static let encryptionFailed = "encryption_failed"
@@ -24,10 +35,16 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
   private(set) var secureCount = 0
   private var covers: [UIView] = []
 
+  /// The current Apple Pay sheet, kept after it is gone to answer a late `applePayComplete`.
+  private var applePay: PayriffApplePaySession?
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: channelName, binaryMessenger: registrar.messenger())
     let instance = PayriffPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
+    registrar.register(
+      PayriffApplePayButtonFactory(messenger: registrar.messenger()),
+      withId: PayriffApplePayButtonFactory.viewType)
   }
 
   override init() {
@@ -55,6 +72,8 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
     secureCount = 0
     removeCovers()
+    applePay?.cancel()
+    applePay = nil
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -86,9 +105,60 @@ public final class PayriffPlugin: NSObject, FlutterPlugin {
       clearWebsiteData(hosts: hosts, result: result)
     case "deviceIntegrity":
       deviceIntegrity(result: result)
+    case "appName":
+      result(Self.appName())
+    case "applePayCanMakePayments":
+      let networks = PayriffApplePayRequest.networks(args?["networks"] as? [String] ?? [])
+      let capabilities = PayriffApplePayRequest.capabilities(
+        args?["capabilities"] as? [String] ?? [])
+      result(
+        !networks.isEmpty && !capabilities.isEmpty
+          && PKPaymentAuthorizationController.canMakePayments(
+            usingNetworks: networks, capabilities: capabilities))
+    case "applePayPresent":
+      applePayPresent(args, result: result)
+    case "applePayComplete":
+      let status: PKPaymentAuthorizationStatus =
+        (args?["status"] as? String) == "success" ? .success : .failure
+      guard let session = applePay else {
+        result(["status": "failure"])
+        return
+      }
+      session.complete(status: status, reply: result)
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  // MARK: - Apple Pay (§17.6)
+
+  /// The app's display name, trimmed; nil when it has none.
+  static func appName() -> String? {
+    for key in ["CFBundleDisplayName", "CFBundleName"] {
+      if let name = (Bundle.main.object(forInfoDictionaryKey: key) as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty
+      {
+        return name
+      }
+    }
+    return nil
+  }
+
+  /// One sheet at a time: while one is up, another request is not presented.
+  private func applePayPresent(_ args: [String: Any]?, result: @escaping FlutterResult) {
+    if let current = applePay, !current.finished {
+      result(["event": "notPresented"])
+      return
+    }
+    guard let args, let request = PayriffApplePayRequest.make(args) else {
+      result(["event": "notPresented"])
+      return
+    }
+    let session = PayriffApplePaySession(makeSheet: { delegate in
+      PayriffPassKitSheet(request: request, delegate: delegate)
+    })
+    applePay = session
+    session.start(reply: result)
   }
 
   // MARK: - Card encryption (§16.6)

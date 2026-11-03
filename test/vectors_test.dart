@@ -325,8 +325,8 @@ void main() {
     }
   });
 
-  test('every vector file is covered by this file, card_vectors_test.dart or '
-      'tls_pinning_test.dart', () {
+  test('every vector file is covered by this file, card_vectors_test.dart, '
+      'tls_pinning_test.dart or wallet_vectors_test.dart', () {
     final Set<String> files = Directory('test/vectors')
         .listSync()
         .whereType<File>()
@@ -356,10 +356,14 @@ void main() {
     // CONTRACT §16.15: hosts, pins, anchors and both chains, asserted in
     // test/tls_pinning_test.dart.
     const Set<String> coveredByPinningTests = <String>{'tls_pins.json'};
+    // CONTRACT §17 (revision 7): every section asserted in
+    // test/wallet_vectors_test.dart.
+    const Set<String> coveredByWalletTests = <String>{'wallet.json'};
     expect(files, <String>{
       ...covered,
       ...coveredByCardTests,
       ...coveredByPinningTests,
+      ...coveredByWalletTests,
     });
   });
 }

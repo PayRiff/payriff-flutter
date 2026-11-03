@@ -3,7 +3,7 @@ description: >-
   Payriff card payments for Flutter: a native card form that pays
   server-created orders with the publishable key, 3-D Secure in a native sheet
   and a verified, typed payment result.
-version: 1.0.0-rc.2
+version: 1.0.0-rc.3
 homepage: https://payriff.com
 documentation: https://docs.payriff.com
 repository: https://github.com/PayRiff/payriff-flutter
@@ -24,8 +24,9 @@ platforms:
 
 # Native code (channel `payriff/native`): card encryption, X-Client-App-Id,
 # screen protection, hardened external launches (CONTRACT §16.11), the
-# removal of 3-D Secure website data (§9.1a) and the device integrity checks
-# (§16.16).
+# removal of 3-D Secure website data (§9.1a), the device integrity checks
+# (§16.16), and Apple Pay (PassKit) and Google Pay (play-services-wallet)
+# with their official buttons as platform views (§17).
 flutter:
   plugin:
     platforms:

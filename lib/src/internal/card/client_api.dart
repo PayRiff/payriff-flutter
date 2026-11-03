@@ -88,20 +88,23 @@ String clientOrderPath(String orderId, [String suffix = '']) {
 /// A prepared `/pay` request: the exact body bytes and the headers that are
 /// resent unchanged on a retry.
 final class PayRequest {
-  /// Creates a request.
+  /// Creates a request. A wallet payment (CONTRACT §17.7) has no
+  /// [wrappedKey].
   PayRequest({
     required this.body,
     required this.wrappedKey,
     required this.idempotencyKey,
   });
 
-  /// `{"method":"CARD","encryptedMessage":"…"}` as UTF-8.
+  /// `{"method":"CARD","encryptedMessage":"…"}` as UTF-8, or the wallet body
+  /// `{"method":"APPLE_PAY"|"GOOGLE_PAY","encryptedMessage":"<token>"}`.
   final Uint8List body;
 
-  /// The RSA-wrapped AES key and IV (`x-secret-key`).
-  final String wrappedKey;
+  /// The RSA-wrapped AES key and IV of a card (`x-secret-key`); `null` for a
+  /// wallet token, which is sent without the header.
+  final String? wrappedKey;
 
-  /// A new UUID per pay attempt (`X-Idempotency-Key`).
+  /// A new UUID per pay attempt, or per wallet token (`X-Idempotency-Key`).
   final String idempotencyKey;
 
   @override
@@ -183,14 +186,15 @@ final class ClientApi {
 
   /// `POST /api/v3/client/orders/{orderId}/pay` with [request]. A 429 is
   /// retried with the same bytes and idempotency key, and so is one request
-  /// that got no response.
+  /// that got no response. `x-secret-key` is sent only with a card's
+  /// wrapped key, never with a wallet token (CONTRACT §17.7).
   Future<Map<String, Object?>> pay(String orderId, PayRequest request) => _call(
     'POST',
     clientOrderPath(orderId, '/pay'),
     body: request.body,
     extraHeaders: <String, String>{
       'Content-Type': 'application/json',
-      'x-secret-key': request.wrappedKey,
+      'x-secret-key': ?request.wrappedKey,
       'X-Idempotency-Key': request.idempotencyKey,
     },
     timeout: clientPostTimeout,

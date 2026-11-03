@@ -17,6 +17,25 @@ const String testClientSecret = 'pr_cs_TEST';
 const String testAppId = 'com.payriff.example.ios';
 const String testOrderId = 'o1';
 
+/// The wallet tokens of `wallet.json` → `payRequests` (CONTRACT §17.7).
+const String testGooglePayToken =
+    '{"signature":"MEQCIFakeSignature","intermediateSigningKey":{"signedKey":'
+    r'"{\"keyValue\":\"MFkwEwYH\",\"keyExpiration\":\"1700000000000\"}",'
+    '"signatures":["MEUCIFake"]},"protocolVersion":"ECv2","signedMessage":'
+    r'"{\"encryptedMessage\":\"ZmFrZQ\",\"ephemeralPublicKey\":\"BOdo\",'
+    r'\"tag\":\"dGFn\"}"}';
+const String testApplePayToken =
+    '{"version":"EC_v1","data":"3+f4oOTwPa6f1UZ6tG","signature":'
+    '"MIAGCSqGSIb3DQEHAqCAMIACAQEx","header":{"ephemeralPublicKey":'
+    '"MFkwEwYHKoZIzj0CAQ","publicKeyHash":'
+    '"LbsUwAT6w1JV9tFXocU813TCHks+LSuFF0R/eBkrWnQ=","transactionId":"aaf5b7"}}';
+
+/// The order's Google Pay part with gateway parameters.
+const Map<String, Object?> testGooglePayGateway = <String, Object?>{
+  'gateway': 'payriff',
+  'gatewayMerchantId': 'BCR2DN4T',
+};
+
 /// A clock whose sleeps return at once (or after fake time, see
 /// [realDelays]) and advance [now].
 class FakeCardClock implements CardClock {
@@ -82,6 +101,34 @@ class NativeCalls {
   /// call: for a tool that attaches during a payment.
   final List<Object?> integrityReplies = <Object?>[];
 
+  /// The reply of `appName` (CONTRACT §17.4).
+  String? appName = 'Example Shop';
+
+  /// The reply of `applePayCanMakePayments` (CONTRACT §17.3 item 4).
+  bool applePayCanPay = true;
+
+  /// The reply of `applePayPresent`: an authorization with
+  /// [testApplePayToken] by default. A [Future] replies when it completes;
+  /// an [Exception] is thrown.
+  Object? applePayPresentReply = <String, Object?>{
+    'event': 'authorized',
+    'paymentData': testApplePayToken,
+  };
+
+  /// When set, `applePayComplete` replies only once it completes: the time
+  /// PassKit takes to dismiss the sheet.
+  Completer<void>? applePayDismissed;
+
+  /// The reply of `googlePayIsReady`.
+  bool googlePayReady = true;
+
+  /// The reply of `googlePayLoad`: payment data with [testGooglePayToken] by
+  /// default. A [Future] replies when it completes.
+  Object? googlePayLoadReply = <String, Object?>{
+    'status': 'ok',
+    'token': testGooglePayToken,
+  };
+
   /// A `deviceIntegrity` reply of a device without signals.
   static const Map<String, Object?> clean = <String, Object?>{
     'compromised': false,
@@ -133,6 +180,24 @@ class NativeCalls {
                   : integrityReply;
               if (reply is Exception) throw reply;
               return reply;
+            case 'appName':
+              return appName;
+            case 'applePayCanMakePayments':
+              return applePayCanPay;
+            case 'applePayPresent':
+              final Object? reply = applePayPresentReply;
+              if (reply is Exception) throw reply;
+              return reply is Future<Object?> ? await reply : reply;
+            case 'applePayComplete':
+              await applePayDismissed?.future;
+              return <String, Object?>{
+                'status': (call.arguments as Map<Object?, Object?>)['status'],
+              };
+            case 'googlePayIsReady':
+              return googlePayReady;
+            case 'googlePayLoad':
+              final Object? reply = googlePayLoadReply;
+              return reply is Future<Object?> ? await reply : reply;
           }
           return null;
         });
@@ -159,6 +224,7 @@ class FakeClientBackend {
   FakeClientBackend({
     this.orderStatus = 'CREATED',
     this.paymentMethods = const <String>['CARD'],
+    this.googlePay,
     Map<String, Object?>? payPayload,
     List<Object>? threeDs,
     List<String>? statuses,
@@ -173,6 +239,9 @@ class FakeClientBackend {
 
   String orderStatus;
   List<String> paymentMethods;
+
+  /// The order's `googlePay` part (CONTRACT §17.3); `null` sends `null`.
+  Map<String, Object?>? googlePay;
   Map<String, Object?> payPayload;
 
   /// Successive `/three-ds` payloads (the last repeats). An `int` answers
@@ -244,6 +313,8 @@ class FakeClientBackend {
       'status': orderStatus,
       'language': 'AZ',
       'paymentMethods': paymentMethods,
+      'googlePay': googlePay,
+      'applePay': null,
     });
   }
 }

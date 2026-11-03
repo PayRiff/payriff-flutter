@@ -14,6 +14,9 @@ it is built on.
   payment page (pay.payriff.com) by default and can be restyled; validation
   and formatting as the customer types, Visa and Mastercard marks,
   Azerbaijani, English and Russian copy, light and dark mode.
+- **Apple Pay and Google Pay**: the official wallet button above the card
+  form (Apple Pay on iOS, Google Pay on Android), or on its own for a screen
+  of yours (see [Apple Pay and Google Pay](#apple-pay-and-google-pay)).
 - **Card data stays protected**: the card is encrypted on the device
   (AES-256-GCM, key wrapped with Payriff's pinned RSA key) and only the
   ciphertext leaves the SDK. WebViews appear only for 3-D Secure.
@@ -46,7 +49,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.2`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.3`).
 
 Then complete the [platform setup](#platform-setup).
 
@@ -152,6 +155,9 @@ PayriffPaymentView(
   reasons" in its language, keeps Pay disabled and passes
   `failed(DEVICE_COMPROMISED)` to `onResult` once. See
   [Security](#security).
+- With `PayriffConfig.applePay` (iOS) or `PayriffConfig.googlePay`
+  (Android) it shows the wallet's button above the form when the order
+  accepts it. See [Apple Pay and Google Pay](#apple-pay-and-google-pay).
 - Call `Payriff.configure` before you show it.
 
 ### Page, bottom sheet or dialog
@@ -250,6 +256,123 @@ PayriffPaymentView(
 
 The view follows your app's theme brightness (`Theme`, or `CupertinoTheme`
 in a `CupertinoApp`) for light and dark mode.
+
+## Apple Pay and Google Pay
+
+The payment view shows the wallet's official button above the card form,
+with an "Or pay by card" divider: Apple Pay on iOS (PassKit) and Google Pay
+on Android (the Google Pay API). The wallet's sheet returns an encrypted
+token, which the SDK sends to Payriff like a card; 3-D Secure, status
+polling and the `PayriffResult` are the same as for cards.
+
+### Merchant setup
+
+Approval is your job; the SDK only needs the configuration below.
+
+- **Apple Pay**: create your own merchant ID (`merchant.…`) in your Apple
+  Developer account. Ask Payriff for a certificate signing request (CSR),
+  create the merchant ID's **Apple Pay Payment Processing Certificate** from
+  it in the Apple Developer account, and give the certificate to Payriff.
+  Then add the **Apple Pay** capability with that merchant ID to your app
+  target in Xcode (Signing & Capabilities → + Capability → Apple Pay).
+- **Google Pay**: request production access for your app in the
+  [Google Pay & Wallet Console](https://pay.google.com/business/console),
+  with the integration type **Gateway**. The plugin adds
+  `play-services-wallet` and enables the Google Pay API in its manifest;
+  there is nothing to add to your app.
+
+The Payriff sandbox has no wallets: try Apple Pay and Google Pay in
+production, with a real card. Region `az` with `PayriffEnvironment.sandbox`
+uses Google Pay's `TEST` environment; everything else uses `PRODUCTION`.
+
+### Configuration
+
+```dart
+Payriff.configure(const PayriffConfig(
+  publishableKey: 'pr_pk_live_…',
+  // iOS only; Android ignores it.
+  applePay: PayriffApplePayConfig(
+    merchantIdentifier: 'merchant.com.example.shop',
+    merchantName: 'Example Shop', // optional
+  ),
+  // Android only; iOS ignores it.
+  googlePay: PayriffGooglePayConfig(
+    merchantId: 'BCR2DN4T…', // optional: from the Google Pay & Wallet Console
+    merchantName: 'Example Shop', // optional
+  ),
+));
+```
+
+- `merchantIdentifier` must start with `merchant.`; an invalid one logs a
+  warning (`Invalid Apple Pay configuration: …`) and leaves Apple Pay off.
+  Card payments are never affected.
+- The wallet sheet's merchant name is `merchantName`, else the order's
+  merchant name, else your app's display name.
+- The wallet button appears only when all of these hold: its configuration
+  is set, the device is not compromised, the order is `CREATED` or
+  `PENDING` and lists `APPLE_PAY` or `GOOGLE_PAY` in `paymentMethods`
+  (Google Pay also needs the order's gateway parameters), and the device can
+  pay (Apple Pay with Visa or Mastercard; Google Pay's `isReadyToPay`).
+  Until then the view looks exactly as without wallets. With
+  `enableLogging`, a `debug` line says why: `Apple Pay offered: false (…)`.
+- Closing the wallet's sheet without paying reports nothing: the customer
+  can try again or pay by card. A wallet that fails returns
+  `failed(WALLET_FAILED)`, and the order can still be paid by card.
+- When the bank asks for 3-D Secure, the Apple Pay sheet closes with its
+  check mark and the bank's page opens in the SDK's sheet. If the status
+  is not final 20 s after the authorization, the Apple Pay sheet closes too,
+  and the SDK keeps polling for the result.
+- An order that accepts a wallet but not `CARD` shows "This order cannot be
+  paid by card" under Pay; the wallet button stays usable.
+
+### Button style
+
+Only the platforms' official buttons draw the Apple Pay and Google Pay
+marks, so the options are limited to these:
+
+```dart
+PayriffPaymentView(
+  orderId: order.orderId,
+  clientSecret: order.clientSecret,
+  onResult: handleResult,
+  style: const PayriffPaymentViewStyle(
+    applePayButton: PayriffApplePayButtonStyle(
+      type: PayriffApplePayButtonType.buy,
+      theme: PayriffApplePayButtonTheme.whiteOutline,
+    ),
+    googlePayButton: PayriffGooglePayButtonStyle(
+      type: PayriffGooglePayButtonType.pay,
+      cornerRadius: 8,
+    ),
+    walletDividerText: 'Or pay with a card',
+  ),
+)
+```
+
+| Option | Values and default |
+|---|---|
+| `type` | Apple: `plain` (default), `buy`, `checkout`, `book`, `donate`, `order`, `subscribe`. Google: `plain` (default), `buy`, `pay`, `checkout`, `book`, `donate`, `order`, `subscribe` |
+| `theme` | Apple: `automatic` (default: black on a light page, white on a dark one), `black`, `white`, `whiteOutline`. Google: `automatic` (default: dark on a light page, light on a dark one), `dark`, `light` |
+| `cornerRadius`, `height` | `null`: the view's `buttonCornerRadius` and `buttonHeight` (16 and 44), or 16 and 44 for a standalone button. A height below 40 is raised to 40 |
+| `walletDividerText` (view) | `null`: "Or pay by card" in the view's language |
+| `showWalletDivider` (view) | `true`; `false` puts the form 16 below the wallet button |
+
+### Standalone buttons
+
+For a screen of your own, `PayriffApplePayButton` (iOS) and
+`PayriffGooglePayButton` (Android) read the order, apply the same rules and
+pay on tap. They take no space until the wallet is offered, and nothing on
+the other platform.
+
+```dart
+PayriffGooglePayButton(
+  orderId: order.orderId,
+  clientSecret: order.clientSecret,
+  style: const PayriffGooglePayButtonStyle(type: PayriffGooglePayButtonType.buy),
+  onAvailabilityChange: (bool available) => setState(() => _wallet = available),
+  onResult: handleResult, // closing the sheet: cancelled(userClosed)
+)
+```
 
 ## Fulfil on your server
 
@@ -442,6 +565,8 @@ configuration applies to later calls.
 | `language` | `null` | `PayriffLanguage.az`, `en` or `ru` for the form and the 3-D Secure sheet. `null` uses the device language (Azerbaijani, Russian, otherwise English). |
 | `enableLogging` | `false` | See [Logging](#logging). |
 | `allowCompromisedDevices` | `false` | In debug builds (`kDebugMode`), `true` lets card payments run on a rooted or jailbroken device or with a hooking tool, and only logs a warning that names what was found. Profile and release builds ignore it with a warning and refuse such devices, so a flag left on never reaches the app you ship. For development on test devices. See [Security](#security). |
+| `applePay` | `null` | `PayriffApplePayConfig`: Apple Pay on iOS. See [Apple Pay and Google Pay](#apple-pay-and-google-pay). |
+| `googlePay` | `null` | `PayriffGooglePayConfig`: Google Pay on Android. See [Apple Pay and Google Pay](#apple-pay-and-google-pay). |
 
 ### Regions
 
@@ -490,8 +615,9 @@ Every result also has these helpers:
   present and unknown values are `null`.
 
 Other helpers: `Payriff.version`, `Payriff.config`,
-`Payriff.isPaymentInProgress`, `Payriff.isDeviceCompromised()` (see
-[Security](#security)) and `PayriffPaymentStatus.parse(raw)`.
+`Payriff.isPaymentInProgress` (a card or wallet payment is running),
+`Payriff.isDeviceCompromised()` (see [Security](#security)) and
+`PayriffPaymentStatus.parse(raw)`.
 
 ### Errors
 
@@ -516,6 +642,7 @@ be paid from the app; create a new order) and, for `validationFailed`,
 | `paymentFailed` | Any other unsuccessful answer, with Payriff's message. The customer may try again. |
 | `unexpectedResponse` | Payriff's next step could not be understood and the status was not final. |
 | `deviceCompromised` | The device is rooted or jailbroken, a hooking tool or a debugger on a release build was found, or the check could not complete, and `allowCompromisedDevices` is off (it works only in debug builds). Nothing was sent. Not fatal: the order can be paid on another device. |
+| `walletFailed` | Apple Pay or Google Pay failed: its sheet could not be shown ("Apple Pay could not be shown. Check the merchant identifier and the Apple Pay capability."), it reported an error ("Google Pay failed (status 10)."), or it returned no token. Nothing was sent. Not fatal: the order can still be paid by card. |
 | `networkError` | Offline, DNS, TLS or timeout. When Payriff's server certificate fails the SDK's pinning, `isRetryable` is `false` and the message is "Payriff's server certificate could not be verified."; nothing was sent. |
 | `unknown` | Anything else, for example a device that cannot encrypt. |
 | `apiError` | Part of the code set shared by all Payriff SDKs; the card flow does not produce it. |
@@ -532,7 +659,10 @@ Payriff.logStream.listen((entry) => myLogger.log(entry.formatted));
 
 `PayriffLogEntry` has `level`, `message`, `timestamp` and `formatted` (the
 `[Payriff] [LEVEL] message` line). Logs never contain card data, and keys
-and secrets show only as `***(<length>)`.
+and secrets show only as `***(<length>)`. Apple Pay and Google Pay tokens
+never reach the logs either; the wallet lines are the availability decision
+(`Google Pay offered: true`), `Apple Pay sheet: success|failure|closed` and
+`Google Pay: ok|cancelled|error <code>`.
 
 Every URL in the logs, including the HTTP details below and URLs inside
 logged bodies, is redacted by one rule:
@@ -585,6 +715,8 @@ unless you collect the entries yourself.
   `confirmCardPayment` starts and right before the card is encrypted: the
   result is `failed(DEVICE_COMPROMISED)` and nothing is sent, and the
   payment view says that card payments aren't available on this device.
+  Apple Pay and Google Pay are checked when the view or the button appears,
+  on tap and right before the token is sent.
   `Payriff.retrieveOrder` is never blocked. `Payriff.isDeviceCompromised()`
   lets you offer another payment method early. A debugger counts only on
   release builds (on iOS: App Store and TestFlight builds). On iOS,
@@ -623,10 +755,15 @@ unless you collect the entries yourself.
 - The plugin's manifest lists known root manager and Xposed manager apps in
   `<queries>`, so the device check can see them on Android 11 and later.
   Nothing to add; no permission is needed.
+- Google Pay: the plugin depends on `com.google.android.gms:play-services-wallet`
+  and declares `com.google.android.gms.wallet.api.enabled` in its manifest.
+  Nothing to add.
 
 ### iOS
 
-Set the deployment target to iOS 16.0 or later. No other setup is needed.
+Set the deployment target to iOS 16.0 or later. No other setup is needed,
+except the Apple Pay capability with your merchant ID when you use Apple
+Pay (see [Merchant setup](#merchant-setup)).
 The SDK injects no JavaScript into bank pages and leaves the user agent
 alone. A bank page's JavaScript `alert`, `confirm` and `prompt` dialogs show
 as native alerts with localized OK and Cancel buttons, titled with the host
@@ -689,6 +826,8 @@ See [example/README.md](example/README.md).
 | `deviceCompromised` on a test device | The device is rooted or jailbroken (Android emulator images with `su` count too), a hooking tool such as Frida runs, a debugger is attached to a release build, or the check could not complete (`check failed`, for example in widget tests, which have no native plugin). Turn on `enableLogging` to see which signal matched. For development and tests, set `allowCompromisedDevices: true` and run a debug build. |
 | `deviceCompromised` although `allowCompromisedDevices` is `true` | The app is a profile or release build (for example `flutter run --release`, or an app from TestFlight or a store). The flag works only in debug builds; the log says "PayriffConfig.allowCompromisedDevices is ignored outside debug builds". Run a debug build on the test device. |
 | `presentationFailed` | The `BuildContext` has no `Navigator` above it (for example a context above `MaterialApp`). |
+| No Apple Pay or Google Pay button | Turn on `enableLogging`: the `debug` line `Apple Pay offered: false (…)` names the first condition that failed, such as a missing configuration, an order without `APPLE_PAY` or `GOOGLE_PAY`, or a device without a Visa or Mastercard card in its wallet. |
+| `walletFailed`: "Apple Pay could not be shown." | The merchant ID in `PayriffApplePayConfig` is not in the app's Apple Pay capability (`com.apple.developer.in-app-payments`), or the app was signed without it. |
 | Payment lost after the app was killed | The app process ended mid-payment. Reconcile the order on your server. |
 
 Turn on `enableLogging` to see every request, 3-D Secure step and status

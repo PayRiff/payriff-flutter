@@ -1,9 +1,10 @@
 // Native half of the payriff Flutter plugin (CONTRACT §16.11): card encryption,
 // X-Client-App-Id, FLAG_SECURE screen protection, hardened external launches, the
-// removal of 3-D Secure website data (§9.1a) and the root, hooking and debugger checks
-// (§16.16). No third-party runtime dependencies.
+// removal of 3-D Secure website data (§9.1a), the root, hooking and debugger checks
+// (§16.16) and Google Pay (§17.5). Its one third-party runtime dependency is Google's
+// play-services-wallet, for the Google Pay API and its PayButton.
 group = "com.payriff.flutter"
-version = "1.0.0-rc.2"
+version = "1.0.0-rc.3"
 
 buildscript {
     val kotlinVersion = "2.4.0"
@@ -64,5 +65,8 @@ kotlin {
 }
 
 dependencies {
+    // CONTRACT §17.5. 19.5.0 rather than the newest, so the plugin never raises the version an
+    // app or another plugin uses; the code also works with 20.x.
+    implementation("com.google.android.gms:play-services-wallet:19.5.0")
     testImplementation("junit:junit:4.13.2")
 }

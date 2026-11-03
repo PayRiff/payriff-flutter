@@ -7,11 +7,15 @@ import 'package:flutter/material.dart';
 
 import '../config.dart';
 import '../error.dart';
+import '../internal/amount.dart';
 import '../internal/card/card_strings.dart';
 import '../internal/card/device_integrity.dart';
 import '../internal/language.dart';
 import '../internal/logger.dart';
 import '../internal/ui/glyphs.dart';
+import '../internal/wallet/wallet_button.dart';
+import '../internal/wallet/wallet_payment.dart';
+import '../internal/wallet/wallet_rules.dart';
 import '../payriff.dart';
 import '../result.dart';
 import 'card_form.dart';
@@ -35,6 +39,14 @@ const Key paymentViewSecureKey = ValueKey<String>('payriff.view.secure');
 
 /// Key of the "Powered by Payriff" footer.
 const Key paymentViewPoweredByKey = ValueKey<String>('payriff.view.poweredBy');
+
+/// Key of the Apple Pay or Google Pay button above the card form.
+const Key paymentViewWalletButtonKey = ValueKey<String>('payriff.view.wallet');
+
+/// Key of the "Or pay by card" divider under the wallet button.
+const Key paymentViewWalletDividerKey = ValueKey<String>(
+  'payriff.view.walletDivider',
+);
 
 /// The images of the payment view (CONTRACT §16.14), package assets of
 /// `payriff` with 2.0x and 3.0x variants.
@@ -65,7 +77,8 @@ abstract final class PaymentViewAssets {
 /// The Pay button's title (CONTRACT §16.14): `view.pay`, or [label] (the
 /// style's `payButtonLabel`) without white space around it, then the amount
 /// with 2 decimals and `.` as the separator, then the currency, for example
-/// "Pay 1.02 AZN". Only the word while the amount is unknown.
+/// "Pay 1.02 AZN". Only the word while the amount is unknown. The amount is
+/// the one the Apple Pay and Google Pay sheets show (CONTRACT §17.4).
 String paymentViewPayTitle(
   PayriffCardStrings strings,
   PayriffClientOrder? order, {
@@ -74,12 +87,12 @@ String paymentViewPayTitle(
   // A blank label counts as none (CONTRACT §16.14).
   final String? custom = label?.trim();
   final String pay = custom == null || custom.isEmpty ? strings.pay : custom;
-  final num? amount = order?.amount;
-  if (amount == null || !amount.isFinite) return pay;
+  final String? amount = formatAmount2(order?.amount);
+  if (amount == null) return pay;
   final String currency = order?.currency?.trim() ?? '';
   return <String>[
     if (pay.isNotEmpty) pay,
-    amount.toStringAsFixed(2),
+    amount,
     if (currency.isNotEmpty) currency,
   ].join(' ');
 }
@@ -105,6 +118,19 @@ String paymentViewPayTitle(
 /// and passes [PayriffErrorCode.deviceCompromised] to [onResult], once. With
 /// `PayriffConfig.allowCompromisedDevices` in a debug build it only logs a
 /// warning; profile and release builds ignore that flag.
+///
+/// **Apple Pay and Google Pay** (CONTRACT §17.9). With
+/// `PayriffConfig.applePay` on iOS or `PayriffConfig.googlePay` on Android,
+/// the view shows the wallet's official button above the card form, with an
+/// "Or pay by card" divider, when the wallet is offered for the order: the
+/// order accepts `APPLE_PAY` or `GOOGLE_PAY` and the device can pay. Until
+/// that is decided, and without a wallet, the view looks exactly as above.
+/// A wallet payment's result goes to [onResult] like a card payment's;
+/// closing the wallet's sheet without paying reports nothing, so the
+/// customer can try again or pay by card. While any payment runs, the form
+/// is locked, Pay shows its spinner and the wallet button is dimmed. An
+/// order that accepts a wallet but no card says that it cannot be paid by
+/// card, and the wallet button stays usable.
 ///
 /// Give it the whole screen, for example as a `Scaffold` body: it scrolls
 /// when the keyboard is up and keeps the footer at the bottom when there is
@@ -178,6 +204,10 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
   bool _deviceRefused = false;
   bool _paying = false;
 
+  /// CONTRACT §17.3: the wallet offered for the loaded order, once decided;
+  /// `null` hides the wallet button and the divider.
+  WalletKind? _wallet;
+
   /// A failure that ends this view's order (fatal, or a refused device) was
   /// passed to `onResult`.
   bool _failureReported = false;
@@ -194,6 +224,16 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
 
   bool get _canPay =>
       _payable && _card.isComplete && !_paying && !_card.isProcessing;
+
+  /// CONTRACT §17.9: the wallet button is disabled while any payment runs,
+  /// and once the order was paid or ended.
+  bool get _walletEnabled =>
+      _wallet != null &&
+      !_paying &&
+      !_card.isProcessing &&
+      !_finished &&
+      !_deviceRefused &&
+      _error == null;
 
   @override
   void initState() {
@@ -226,6 +266,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
     _error = null;
     _finished = false;
     _deviceRefused = false;
+    _wallet = null;
     _loading = true;
     final PayriffConfig? config = Payriff.config;
     final PayriffError? refused = await deviceIntegrityError(
@@ -268,6 +309,23 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       if (error != null) _error = error.message;
     });
     if (error != null && error.isFatal) _reportOnce(error);
+    if (order != null) await _decideWallet(generation, order);
+  }
+
+  /// CONTRACT §17.3 for the loaded [order]; the device check passed when
+  /// the view appeared.
+  Future<void> _decideWallet(int generation, PayriffClientOrder order) async {
+    final WalletKind? kind = platformWallet;
+    if (kind == null) return;
+    final PayriffConfig? config = Payriff.config;
+    final bool offered = await decideWalletOffer(
+      kind: kind,
+      order: order,
+      config: config,
+      logger: sdkLoggerFor(config),
+    );
+    if (!offered || !mounted || generation != _loadGeneration) return;
+    setState(() => _wallet = kind);
   }
 
   void _reportOnce(PayriffError error) {
@@ -285,6 +343,40 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       orderId: widget.orderId,
       clientSecret: widget.clientSecret,
     );
+    _finishPayment(result);
+  }
+
+  /// A tap on the wallet button (CONTRACT §17.5, §17.6).
+  Future<void> _payWithWallet() async {
+    final WalletKind? kind = _wallet;
+    final PayriffClientOrder? order = _order;
+    if (kind == null || order == null || !_walletEnabled) return;
+    setState(() => _paying = true);
+    // CONTRACT §17.9: the form is locked while any payment runs.
+    setCardFormProcessing(_card, true);
+    final PayriffResult? result;
+    try {
+      result = await payWithWallet(
+        context,
+        kind: kind,
+        order: order,
+        orderId: widget.orderId,
+        clientSecret: widget.clientSecret,
+      );
+    } finally {
+      setCardFormProcessing(_card, false);
+    }
+    if (result == null) {
+      // CONTRACT §17.8: the wallet's sheet closed without paying. Nothing is
+      // reported; the customer can try again or pay by card.
+      if (mounted) setState(() => _paying = false);
+      return;
+    }
+    _finishPayment(result);
+  }
+
+  /// Ends a card or wallet payment with [result] and reports it.
+  void _finishPayment(PayriffResult result) {
     final PayriffError? error = result.error;
     final bool orderEnded =
         error != null &&
@@ -334,11 +426,32 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
               (order != null && !order.isPayableByCard
                   ? strings.notPayable
                   : null);
+    final WalletKind? wallet = _deviceRefused ? null : _wallet;
+    final List<Widget> walletRow = wallet == null || order == null
+        ? const <Widget>[]
+        : _walletRow(wallet, order, style, strings, formLook, secondary, dark);
 
     final Widget content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
+        // CONTRACT §17.9: the wallet button and the divider above the form,
+        // only once the wallet is offered; it slides in rather than jumping.
+        // Without a configured wallet the layout is exactly §16.14.
+        if (platformWallet case final WalletKind kind
+            when walletConfigProblem(Payriff.config, kind) == null)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: Alignment.topCenter,
+            child: walletRow.isEmpty
+                ? const SizedBox(width: double.infinity)
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: walletRow,
+                  ),
+          ),
         PayriffCardForm(
           controller: _card,
           language: language,
@@ -455,6 +568,114 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
             );
           },
         ),
+      ),
+    );
+  }
+
+  /// The wallet button and the divider (CONTRACT §17.9): the button full
+  /// width, as high as the wallet style's `height` or the view's
+  /// `buttonHeight`, with the wallet style's `cornerRadius` or the view's
+  /// `buttonCornerRadius`; the divider 16 below it and the form 16 below
+  /// that. Empty when the order cannot fill the button.
+  List<Widget> _walletRow(
+    WalletKind kind,
+    PayriffClientOrder order,
+    PayriffPaymentViewStyle style,
+    PayriffCardStrings strings,
+    CardFormLook formLook,
+    TextStyle secondary,
+    bool dark,
+  ) {
+    final double? height = switch (kind) {
+      WalletKind.applePay => style.applePayButton.height,
+      WalletKind.googlePay => style.googlePayButton.height,
+    };
+    final double cornerRadius = walletButtonCornerRadius(switch (kind) {
+      WalletKind.applePay => style.applePayButton.cornerRadius,
+      WalletKind.googlePay => style.googlePayButton.cornerRadius,
+    }, style.buttonCornerRadius);
+    final List<Object?>? googlePayMethods = kind == WalletKind.googlePay
+        ? googlePayAllowedPaymentMethods(order)
+        : null;
+    final Map<String, Object?>? params = switch (kind) {
+      WalletKind.applePay => applePayButtonParams(
+        style.applePayButton,
+        dark: dark,
+        cornerRadius: cornerRadius,
+      ),
+      WalletKind.googlePay =>
+        googlePayMethods == null
+            ? null
+            : googlePayButtonParams(
+                style.googlePayButton,
+                dark: dark,
+                cornerRadius: cornerRadius,
+                allowedPaymentMethods: googlePayMethods,
+              ),
+    };
+    if (params == null) return const <Widget>[];
+    return <Widget>[
+      ListenableBuilder(
+        listenable: _card,
+        builder: (BuildContext context, _) => WalletPlatformButton(
+          key: paymentViewWalletButtonKey,
+          kind: kind,
+          params: params,
+          height: walletButtonHeight(height, style.buttonHeight),
+          enabled: _walletEnabled,
+          onTap: _payWithWallet,
+        ),
+      ),
+      if (style.showWalletDivider) ...<Widget>[
+        const SizedBox(height: 16),
+        _WalletDivider(
+          key: paymentViewWalletDividerKey,
+          text: _orLocalized(style.walletDividerText, strings.orPayByCard),
+          style: secondary,
+          lineColor: formLook.border,
+        ),
+      ],
+      const SizedBox(height: 16),
+    ];
+  }
+}
+
+/// "Or pay by card" between the wallet button and the card form (CONTRACT
+/// §17.9): the text centred, with a 1-high line in the border colour on
+/// each side, 12 from the text.
+class _WalletDivider extends StatelessWidget {
+  const _WalletDivider({
+    super.key,
+    required this.text,
+    required this.style,
+    required this.lineColor,
+  });
+
+  final String text;
+  final TextStyle style;
+  final Color lineColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget line = Expanded(
+      child: SizedBox(height: 1, child: ColoredBox(color: lineColor)),
+    );
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) => Row(
+        children: <Widget>[
+          line,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: ConstrainedBox(
+              // A long text wraps, and the lines keep some length.
+              constraints: BoxConstraints(
+                maxWidth: math.max(0, (constraints.maxWidth - 24) * 0.8),
+              ),
+              child: Text(text, style: style, textAlign: TextAlign.center),
+            ),
+          ),
+          line,
+        ],
       ),
     );
   }

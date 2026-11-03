@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.0-rc.3 - 2026-11-03
+
+### Added
+
+- Apple Pay on iOS and Google Pay on Android (CONTRACT revision 7):
+  `PayriffConfig.applePay` (`PayriffApplePayConfig`: `merchantIdentifier`,
+  `merchantName`) and `PayriffConfig.googlePay` (`PayriffGooglePayConfig`:
+  `merchantId`, `merchantName`), both off by default. The wallet's token
+  goes to Payriff's Client API (`/pay` with `APPLE_PAY` or `GOOGLE_PAY`,
+  without `x-secret-key`); 3-D Secure, status polling and the result are the
+  same as for cards.
+- `PayriffPaymentView` shows the official Apple Pay or Google Pay button
+  above the card form, with an "Or pay by card" divider (Azerbaijani,
+  English and Russian), when the wallet is offered for the order: it is
+  configured, the device is not compromised, the order accepts the wallet
+  and the device can pay. Without a wallet the view is unchanged. Closing
+  the wallet's sheet reports nothing; the customer can pay by card.
+- `PayriffPaymentViewStyle.applePayButton`, `googlePayButton`,
+  `walletDividerText` and `showWalletDivider`, and the button styles
+  `PayriffApplePayButtonStyle` (`PayriffApplePayButtonType`,
+  `PayriffApplePayButtonTheme`) and `PayriffGooglePayButtonStyle`
+  (`PayriffGooglePayButtonType`, `PayriffGooglePayButtonTheme`): type,
+  theme (`automatic` follows the page), corner radius and height.
+- Standalone `PayriffApplePayButton` and `PayriffGooglePayButton` widgets
+  (`orderId`, `clientSecret`, `style`, `onAvailabilityChange`, `onResult`)
+  for screens of your own. Closing the sheet gives `cancelled(userClosed)`.
+- `PayriffClientOrder.applePay` (`PayriffClientOrderApplePay`) and
+  `PayriffClientOrder.googlePay` (`PayriffClientOrderGooglePay`).
+- `PayriffErrorCode.walletFailed` (`WALLET_FAILED`): the wallet's sheet
+  could not be shown, failed or returned no token. Not fatal.
+
+### Changed
+
+- The Android part of the plugin depends on
+  `com.google.android.gms:play-services-wallet` (19.5.0) and enables the
+  Google Pay API in its manifest. The iOS part links PassKit.
+- `Payriff.isPaymentInProgress` covers wallet payments too: one payment at a
+  time, card or wallet.
+- `PayriffConfig.toString()` shows `applePay` (the merchant ID) and
+  `googlePay` (`on`); `Payriff.configure` logs a warning for an invalid
+  Apple Pay merchant ID.
+- The Pay button's amount uses decimal rounding (the same text as the
+  wallet sheets): an amount such as `1.005` shows `1.01`.
+
+### Security
+
+- Wallet tokens are never logged and never appear in error messages or
+  `toString`; they are sent over the same pinned connection as cards, with
+  a new idempotency key per token. The device checks also run when a wallet
+  button appears, on tap and right before the token is sent.
+
 ## 1.0.0-rc.2 - 2026-10-27
 
 Second release candidate of 1.0.0. The API can still change before 1.0.0.
