@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.0-rc.6 - 2026-11-04
+
+### Changed
+
+- Apple Pay and Google Pay follow the app's configuration only (CONTRACT
+  revision 10): the order's `paymentMethods` are no longer checked, so a
+  configured wallet appears for every order that is `CREATED` or `PENDING`
+  with an amount and a currency. Apple Pay is offered only on iOS and
+  Google Pay only on Android, whatever is configured.
+
+### Added
+
+- `PayriffGooglePayConfig.gatewayMerchantId` and `gateway` (default
+  `payriff`): Google Pay's tokenization parameters when the order has no
+  `googlePay` object. The order's values win when it has them; without a
+  `gatewayMerchantId` anywhere, Google Pay is not offered (the debug line
+  says `no gatewayMerchantId`).
+
 ## 1.0.0-rc.5 - 2026-11-04
 
 ### Fixed

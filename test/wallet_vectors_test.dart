@@ -1,10 +1,12 @@
 // CONTRACT §17.12: every section of test/vectors/wallet.json. Merchant ID
 // normalisation, availability, amounts, Google Pay environments and JSON
 // (compared as JSON values), the Apple Pay request, the wallet /pay request
-// (headers present and absent, body), the Apple Pay sheet table and the
-// button styles. No network: /pay goes to a mock client.
+// (headers present and absent, body), the Apple Pay sheet table, the button
+// styles, the Apple Pay networks, and revision 10's platform guard and
+// Google Pay gateway parameters. No network: /pay goes to a mock client.
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -15,6 +17,8 @@ import 'package:payriff/src/config.dart'
 import 'package:payriff/src/internal/amount.dart';
 import 'package:payriff/src/internal/card/card_strings.dart';
 import 'package:payriff/src/internal/card/client_api.dart';
+import 'package:payriff/src/internal/logger.dart';
+import 'package:payriff/src/internal/wallet/wallet_payment.dart';
 import 'package:payriff/src/internal/wallet/wallet_rules.dart';
 
 import 'support/card_support.dart';
@@ -35,6 +39,26 @@ PayriffRegion _region(Object? name) =>
 
 /// [value] as plain JSON, so maps and lists compare as JSON values.
 Object? _json(Object? value) => jsonDecode(jsonEncode(value));
+
+/// The Google Pay configuration of a case: its `gateway` and
+/// `gatewayMerchantId` (`null` keeps the defaults), and its `merchantId` and
+/// `merchantName` when the case has them.
+PayriffGooglePayConfig _googleConfig(Object? value) {
+  final Map<String, Object?> c = (value as Map<String, Object?>?) ?? const {};
+  final String? gateway = c['gateway'] as String?;
+  return gateway == null
+      ? PayriffGooglePayConfig(
+          merchantId: c['merchantId'] as String?,
+          merchantName: c['merchantName'] as String?,
+          gatewayMerchantId: c['gatewayMerchantId'] as String?,
+        )
+      : PayriffGooglePayConfig(
+          merchantId: c['merchantId'] as String?,
+          merchantName: c['merchantName'] as String?,
+          gatewayMerchantId: c['gatewayMerchantId'] as String?,
+          gateway: gateway,
+        );
+}
 
 void main() {
   test('the wallet tokens of the test support are the vectors', () {
@@ -108,13 +132,20 @@ void main() {
       final PayriffClientOrder order = _order(c['order']);
       final Map<String, Object?> expected =
           c['expect']! as Map<String, Object?>;
+      // Revision 10: paymentMethods is not checked; the case gives the
+      // Google Pay configuration's gateway fields.
+      final PayriffGooglePayConfig googlePay = _googleConfig(
+        c['googlePayConfig'],
+      );
       expect(
-        walletOrderProblem(order, WalletKind.applePay) == null,
+        walletOrderProblem(order, WalletKind.applePay, googlePay: googlePay) ==
+            null,
         expected['applePay'],
         reason: '${c['name']}: Apple Pay',
       );
       expect(
-        walletOrderProblem(order, WalletKind.googlePay) == null,
+        walletOrderProblem(order, WalletKind.googlePay, googlePay: googlePay) ==
+            null,
         expected['googlePay'],
         reason: '${c['name']}: Google Pay',
       );
@@ -141,9 +172,20 @@ void main() {
       'currency': 'AZN',
       'paymentMethods': <String>['CARD'],
     });
+    // Revision 10: a card-only order is fine; Google Pay only lacks its
+    // gateway merchant id, which the configuration can give.
+    expect(walletOrderProblem(card, WalletKind.applePay), isNull);
     expect(
       walletOrderProblem(card, WalletKind.googlePay),
-      'GOOGLE_PAY not in paymentMethods',
+      'no gatewayMerchantId',
+    );
+    expect(
+      walletOrderProblem(
+        card,
+        WalletKind.googlePay,
+        googlePay: const PayriffGooglePayConfig(gatewayMerchantId: 'PRF0001'),
+      ),
+      isNull,
     );
     expect(
       walletDecisionLine(WalletKind.googlePay, null),
@@ -199,17 +241,14 @@ void main() {
     final List<Map<String, Object?>> cases = _list(_v['googlePayRequests']);
     expect(cases, isNotEmpty);
     for (final Map<String, Object?> c in cases) {
-      final Map<String, Object?> config = c['config']! as Map<String, Object?>;
+      final PayriffGooglePayConfig config = _googleConfig(c['config']);
       final Map<String, Object?> expected =
           c['expect']! as Map<String, Object?>;
       final PayriffClientOrder order = _order(c['order']);
       final Map<String, Object?>? request = googlePayPaymentDataRequest(
         order: order,
         region: _region(c['region']),
-        config: PayriffGooglePayConfig(
-          merchantId: config['merchantId'] as String?,
-          merchantName: config['merchantName'] as String?,
-        ),
+        config: config,
         appName: c['appName'] as String?,
       );
       expect(
@@ -223,12 +262,12 @@ void main() {
         reason: '${c['name']}',
       );
       expect(
-        _json(googlePayAllowedPaymentMethods(order)),
+        _json(googlePayAllowedPaymentMethods(order, config)),
         expected['buttonAllowedPaymentMethods'],
       );
       // The button's methods are the request's.
       expect(
-        _json(googlePayAllowedPaymentMethods(order)),
+        _json(googlePayAllowedPaymentMethods(order, config)),
         _json(request!['allowedPaymentMethods']),
       );
       // What the button's platform view gets.
@@ -238,7 +277,10 @@ void main() {
                 const PayriffGooglePayButtonStyle(),
                 dark: false,
                 cornerRadius: 16,
-                allowedPaymentMethods: googlePayAllowedPaymentMethods(order)!,
+                allowedPaymentMethods: googlePayAllowedPaymentMethods(
+                  order,
+                  config,
+                )!,
               )['allowedPaymentMethods']!
               as String,
         ),
@@ -609,6 +651,158 @@ void main() {
         PayriffGooglePayButtonTheme.light,
       );
       expect(google, isNot(const PayriffGooglePayButtonStyle()));
+    });
+  });
+
+  test('googlePayGateway: the order\'s values, else the configuration\'s, '
+      'else payriff; trimmed, blank is missing (revision 10)', () {
+    final Map<String, Object?> section =
+        _v['googlePayGateway']! as Map<String, Object?>;
+    final List<Map<String, Object?>> cases = _list(section['cases']);
+    expect(cases, isNotEmpty);
+    for (final Map<String, Object?> c in cases) {
+      final Map<String, Object?>? orderGooglePay =
+          c['orderGooglePay'] as Map<String, Object?>?;
+      final PayriffClientOrder order = _order(<String, Object?>{
+        'orderId': testOrderId,
+        'amount': 10.5,
+        'currency': 'AZN',
+        'status': 'CREATED',
+        'paymentMethods': <String>['CARD'],
+        'googlePay': orderGooglePay,
+      });
+      final PayriffGooglePayConfig config = _googleConfig(c['config']);
+      final ({String gateway, String gatewayMerchantId})? gateway =
+          googlePayGateway(order, config);
+      final Map<String, Object?>? expected =
+          c['expect'] as Map<String, Object?>?;
+      expect(
+        gateway == null
+            ? null
+            : <String, Object?>{
+                'gateway': gateway.gateway,
+                'gatewayMerchantId': gateway.gatewayMerchantId,
+              },
+        expected,
+        reason: '${c['name']}',
+      );
+      // Google Pay is offered exactly when the parameters resolve.
+      expect(
+        walletOrderProblem(order, WalletKind.googlePay, googlePay: config),
+        expected == null ? 'no gatewayMerchantId' : isNull,
+        reason: '${c['name']}',
+      );
+    }
+    expect(googlePayDefaultGateway, 'payriff');
+    expect(const PayriffGooglePayConfig().gateway, 'payriff');
+  });
+
+  group('platformGuard: each wallet only on its own platform (revision '
+      '10)', () {
+    final Map<String, Object?> section =
+        _v['platformGuard']! as Map<String, Object?>;
+    for (final Map<String, Object?> c in _list(section['cases'])) {
+      final TargetPlatform platform = switch (c['platform']) {
+        'ios' => TargetPlatform.iOS,
+        'android' => TargetPlatform.android,
+        _ => throw StateError('unknown platform ${c['platform']}'),
+      };
+      final PayriffConfig config = PayriffConfig(
+        publishableKey: testPublishableKey,
+        applePay: c['applePayConfigured'] == true
+            ? const PayriffApplePayConfig(
+                merchantIdentifier: 'merchant.com.example.shop',
+              )
+            : null,
+        googlePay: c['googlePayConfigured'] == true
+            ? const PayriffGooglePayConfig(gatewayMerchantId: 'PRF0001')
+            : null,
+      );
+      testWidgets('${c['platform']}: Apple Pay configured '
+          '${c['applePayConfigured']}, Google Pay configured '
+          '${c['googlePayConfigured']}', (WidgetTester tester) async {
+        NativeCalls().install();
+        // A card-only order with no googlePay object: only the
+        // configuration and the platform decide.
+        final PayriffClientOrder order = _order(<String, Object?>{
+          'orderId': testOrderId,
+          'amount': 10.5,
+          'currency': 'AZN',
+          'status': 'CREATED',
+          'paymentMethods': <String>['CARD'],
+        });
+        final Map<String, Object?> expected =
+            c['expect']! as Map<String, Object?>;
+        for (final (WalletKind kind, String name) in <(WalletKind, String)>[
+          (WalletKind.applePay, 'applePay'),
+          (WalletKind.googlePay, 'googlePay'),
+        ]) {
+          expect(
+            await decideWalletOffer(
+              kind: kind,
+              order: order,
+              config: config,
+              logger: SdkLogger.silent,
+            ),
+            expected[name],
+            reason: name,
+          );
+        }
+        expect(
+          platformWallet,
+          platform == TargetPlatform.iOS
+              ? WalletKind.applePay
+              : WalletKind.googlePay,
+        );
+      }, variant: TargetPlatformVariant.only(platform));
+    }
+  });
+
+  test('PayriffGooglePayConfig: the gateway fields take part in ==, '
+      'hashCode and toString', () {
+    const PayriffGooglePayConfig a = PayriffGooglePayConfig(
+      gatewayMerchantId: 'PRF0001',
+    );
+    expect(a, const PayriffGooglePayConfig(gatewayMerchantId: 'PRF0001'));
+    expect(
+      a.hashCode,
+      const PayriffGooglePayConfig(gatewayMerchantId: 'PRF0001').hashCode,
+    );
+    expect(a, isNot(const PayriffGooglePayConfig()));
+    expect(
+      a,
+      isNot(
+        const PayriffGooglePayConfig(
+          gatewayMerchantId: 'PRF0001',
+          gateway: 'gccpay',
+        ),
+      ),
+    );
+    expect(
+      a.toString(),
+      allOf(
+        contains('gatewayMerchantId: PRF0001'),
+        contains('gateway: payriff'),
+      ),
+    );
+  });
+
+  test('every section of wallet.json is asserted here', () {
+    expect(_v.keys.toSet(), <String>{
+      'description',
+      'applePayMerchantIdentifiers',
+      'googlePayMerchantIds',
+      'availability',
+      'amounts',
+      'googlePayEnvironments',
+      'googlePayRequests',
+      'applePayRequests',
+      'payRequests',
+      'applePaySheet',
+      'buttonStyles',
+      'applePayNetworks',
+      'platformGuard',
+      'googlePayGateway',
     });
   });
 }

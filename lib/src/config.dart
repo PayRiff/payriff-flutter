@@ -106,10 +106,19 @@ final class PayriffApplePayConfig {
 /// For live payments, your app needs production access in the Google Pay &
 /// Wallet Console, with the integration type *Gateway*. See "Apple Pay and
 /// Google Pay" in the README.
+///
+/// Google Pay is offered whenever this is set (CONTRACT §17.3, revision
+/// 10): the order's `paymentMethods` are not checked. It needs Payriff's
+/// gateway merchant id, from the order or from [gatewayMerchantId].
 @immutable
 final class PayriffGooglePayConfig {
   /// Creates a Google Pay configuration. Every field is optional.
-  const PayriffGooglePayConfig({this.merchantId, this.merchantName});
+  const PayriffGooglePayConfig({
+    this.merchantId,
+    this.merchantName,
+    this.gatewayMerchantId,
+    this.gateway = 'payriff',
+  });
 
   /// Your merchant ID from the Google Pay & Wallet Console, sent as
   /// `merchantInfo.merchantId`. Surrounding white space is removed; `null`
@@ -120,19 +129,33 @@ final class PayriffGooglePayConfig {
   /// `null` or blank uses the order's merchant name, then the app's name.
   final String? merchantName;
 
+  /// Your Payriff merchant id for Google Pay's `PAYMENT_GATEWAY`
+  /// tokenization (CONTRACT §17.5), used when the order has none. Ask
+  /// Payriff for it. Surrounding white space is removed. Without it and
+  /// without one on the order, Google Pay is not offered.
+  final String? gatewayMerchantId;
+
+  /// The tokenization `gateway`, used when the order has none. Surrounding
+  /// white space is removed; blank uses `payriff`. Defaults to `payriff`.
+  final String gateway;
+
   @override
   bool operator ==(Object other) =>
       other is PayriffGooglePayConfig &&
       other.merchantId == merchantId &&
-      other.merchantName == merchantName;
+      other.merchantName == merchantName &&
+      other.gatewayMerchantId == gatewayMerchantId &&
+      other.gateway == gateway;
 
   @override
-  int get hashCode => Object.hash(merchantId, merchantName);
+  int get hashCode =>
+      Object.hash(merchantId, merchantName, gatewayMerchantId, gateway);
 
   @override
   String toString() =>
       'PayriffGooglePayConfig(merchantId: $merchantId, '
-      'merchantName: $merchantName)';
+      'merchantName: $merchantName, gatewayMerchantId: $gatewayMerchantId, '
+      'gateway: $gateway)';
 }
 
 /// SDK-wide configuration, passed to `Payriff.configure`.
@@ -208,17 +231,20 @@ final class PayriffConfig {
   /// never offered. Android ignores it.
   ///
   /// When it is set and valid, `PayriffPaymentView` shows the Apple Pay
-  /// button above the card form for orders that accept `APPLE_PAY`, on
-  /// devices that can pay with Visa or Mastercard. `PayriffApplePayButton`
-  /// shows the button alone.
+  /// button above the card form on devices that can pay with Visa or
+  /// Mastercard, whatever the order's `paymentMethods` list (CONTRACT
+  /// §17.3, revision 10). `PayriffApplePayButton` shows the button alone.
   final PayriffApplePayConfig? applePay;
 
   /// Google Pay on Android (CONTRACT §17). `null` (the default): Google Pay
   /// is never offered. iOS ignores it.
   ///
   /// When it is set, `PayriffPaymentView` shows the Google Pay button above
-  /// the card form for orders that accept `GOOGLE_PAY`, when Google Pay is
-  /// ready on the device. `PayriffGooglePayButton` shows the button alone.
+  /// the card form when Google Pay is ready on the device, whatever the
+  /// order's `paymentMethods` list (CONTRACT §17.3, revision 10); it needs a
+  /// gateway merchant id from the order or
+  /// `PayriffGooglePayConfig.gatewayMerchantId`. `PayriffGooglePayButton`
+  /// shows the button alone.
   /// [PayriffEnvironment.sandbox] in region [PayriffRegion.az] uses Google
   /// Pay's `TEST` environment; everything else uses `PRODUCTION`.
   final PayriffGooglePayConfig? googlePay;

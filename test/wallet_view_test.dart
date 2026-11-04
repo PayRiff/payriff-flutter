@@ -174,14 +174,15 @@ void main() {
       expect(screen.views.created, isEmpty);
       expect(find.text('Pay 10.50 AZN'), findsOneWidget);
 
-      // Configured, but not offered: the order has no GOOGLE_PAY, or Google
-      // Pay is not ready on the device.
+      // Configured, but not offered: no gateway merchant id on the order or
+      // in the configuration (CONTRACT revision 10: paymentMethods is not
+      // checked), or Google Pay is not ready on the device.
       for (final (FakeClientBackend backend, NativeCalls native, String line)
           in <(FakeClientBackend, NativeCalls, String)>[
             (
-              _walletOrder(methods: const <String>['CARD']),
+              FakeClientBackend(),
               NativeCalls(),
-              'Google Pay offered: false (GOOGLE_PAY not in paymentMethods)',
+              'Google Pay offered: false (no gatewayMerchantId)',
             ),
             (
               _walletOrder(),
@@ -493,6 +494,128 @@ void main() {
     });
   });
 
+  group('revision 10: the configuration decides, on its own platform', () {
+    testWidgets('a card-only order without googlePay offers Google Pay with '
+        'the configuration\'s gatewayMerchantId', (WidgetTester tester) async {
+      final _Screen screen = await _showView(
+        tester,
+        FakeClientBackend(),
+        config: const PayriffConfig(
+          environment: PayriffEnvironment.sandbox,
+          publishableKey: testPublishableKey,
+          enableLogging: true,
+          googlePay: PayriffGooglePayConfig(gatewayMerchantId: ' PRF0001 '),
+        ),
+      );
+      expect(screen.logs, contains('Google Pay offered: true'));
+      expect(find.byKey(paymentViewWalletButtonKey), findsOneWidget);
+      final CreatedPlatformView view = screen.views.live(_googleView).single;
+      expect(
+        jsonDecode(view.params['allowedPaymentMethods']! as String),
+        <Object?>[
+          <String, Object?>{
+            'type': 'CARD',
+            'parameters': <String, Object?>{
+              'allowedAuthMethods': <String>['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+              'allowedCardNetworks': <String>['VISA', 'MASTERCARD'],
+            },
+            'tokenizationSpecification': <String, Object?>{
+              'type': 'PAYMENT_GATEWAY',
+              'parameters': <String, Object?>{
+                'gateway': 'payriff',
+                'gatewayMerchantId': 'PRF0001',
+              },
+            },
+          },
+        ],
+      );
+      await screen.views.tap(view);
+      await _frames(tester);
+      expect(screen.results.single, isA<PayriffResultSuccess>());
+      final Map<String, Object?> request =
+          jsonDecode(
+                (screen.native.named('googlePayLoad').single.arguments
+                        as Map<Object?, Object?>)['request']!
+                    as String,
+              )
+              as Map<String, Object?>;
+      expect(
+        ((request['allowedPaymentMethods']! as List<Object?>).single
+            as Map<String, Object?>)['tokenizationSpecification'],
+        <String, Object?>{
+          'type': 'PAYMENT_GATEWAY',
+          'parameters': <String, Object?>{
+            'gateway': 'payriff',
+            'gatewayMerchantId': 'PRF0001',
+          },
+        },
+      );
+    });
+
+    testWidgets('Android: a configured Apple Pay never appears', (
+      WidgetTester tester,
+    ) async {
+      final List<bool> availability = <bool>[];
+      _Screen screen = await _showView(tester, _walletOrder(), config: _apple);
+      expect(find.byKey(paymentViewWalletButtonKey), findsNothing);
+      expect(find.byKey(paymentViewWalletDividerKey), findsNothing);
+      expect(screen.views.created, isEmpty);
+      expect(screen.native.named('applePayCanMakePayments'), isEmpty);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      Payriff.debugReset();
+      screen = await _show(
+        tester,
+        _walletOrder(),
+        config: _apple,
+        child: (ValueChanged<PayriffResult> onResult) => PayriffApplePayButton(
+          key: const ValueKey<String>('apple'),
+          orderId: testOrderId,
+          clientSecret: testClientSecret,
+          onAvailabilityChange: availability.add,
+          onResult: onResult,
+        ),
+      );
+      expect(availability, <bool>[false]);
+      expect(
+        tester.getSize(find.byKey(const ValueKey<String>('apple'))),
+        Size.zero,
+      );
+      expect(screen.views.created, isEmpty);
+    }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+    testWidgets('iOS: a configured Google Pay never appears', (
+      WidgetTester tester,
+    ) async {
+      final List<bool> availability = <bool>[];
+      _Screen screen = await _showView(tester, _walletOrder(), config: _google);
+      expect(find.byKey(paymentViewWalletButtonKey), findsNothing);
+      expect(screen.views.created, isEmpty);
+      expect(screen.native.named('googlePayIsReady'), isEmpty);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      Payriff.debugReset();
+      screen = await _show(
+        tester,
+        _walletOrder(),
+        config: _google,
+        child: (ValueChanged<PayriffResult> onResult) => PayriffGooglePayButton(
+          key: const ValueKey<String>('google'),
+          orderId: testOrderId,
+          clientSecret: testClientSecret,
+          onAvailabilityChange: availability.add,
+          onResult: onResult,
+        ),
+      );
+      expect(availability, <bool>[false]);
+      expect(
+        tester.getSize(find.byKey(const ValueKey<String>('google'))),
+        Size.zero,
+      );
+      expect(screen.views.created, isEmpty);
+    }, variant: _ios);
+  });
+
   group('standalone buttons (CONTRACT §17.10)', () {
     Widget google(
       ValueChanged<PayriffResult> onResult,
@@ -553,9 +676,11 @@ void main() {
       WidgetTester tester,
     ) async {
       final List<bool> availability = <bool>[];
+      // No gateway merchant id on the order or in the configuration
+      // (CONTRACT revision 10).
       final _Screen screen = await _show(
         tester,
-        _walletOrder(methods: const <String>['CARD']),
+        FakeClientBackend(),
         config: _google,
         child: (ValueChanged<PayriffResult> onResult) =>
             google(onResult, availability),

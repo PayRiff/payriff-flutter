@@ -57,7 +57,11 @@ Future<String?> _walletProblem(
   if (configProblem != null || config == null) {
     return configProblem ?? 'not configured';
   }
-  final String? orderProblem = walletOrderProblem(order, kind);
+  final String? orderProblem = walletOrderProblem(
+    order,
+    kind,
+    googlePay: config.googlePay,
+  );
   if (orderProblem != null) return orderProblem;
   switch (kind) {
     case WalletKind.applePay:

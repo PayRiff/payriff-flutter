@@ -150,7 +150,9 @@ String paymentViewPayTitle(
 /// `PayriffConfig.applePay` on iOS or `PayriffConfig.googlePay` on Android,
 /// the view shows the wallet's official button above the card form, with an
 /// "Or pay by card" divider, when the wallet is offered for the order: the
-/// order accepts `APPLE_PAY` or `GOOGLE_PAY` and the device can pay. Until
+/// order can be paid and the device can pay. The app's configuration
+/// decides, on the wallet's own platform only; the order's
+/// `paymentMethods` are not checked (CONTRACT §17.3, revision 10). Until
 /// that is decided, and without a wallet, the view looks exactly as above.
 /// A wallet payment's result goes to [onResult] like a card payment's;
 /// closing the wallet's sheet without paying reports nothing, so the
@@ -703,7 +705,7 @@ class _PayriffPaymentViewState extends State<PayriffPaymentView> {
       WalletKind.googlePay => style.googlePayButton.cornerRadius,
     }, style.buttonCornerRadius);
     final List<Object?>? googlePayMethods = kind == WalletKind.googlePay
-        ? googlePayAllowedPaymentMethods(order)
+        ? googlePayAllowedPaymentMethods(order, Payriff.config?.googlePay)
         : null;
     final Map<String, Object?>? params = switch (kind) {
       WalletKind.applePay => applePayButtonParams(

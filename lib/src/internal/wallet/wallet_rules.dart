@@ -121,35 +121,49 @@ String? walletConfigProblem(PayriffConfig? config, WalletKind kind) {
 
 /// CONTRACT §17.3 item 3 (`wallet.json` → `availability`): why [order]
 /// cannot be paid with [kind], or `null` when it can. The status must be
-/// `CREATED` or `PENDING` and `paymentMethods` must list [WalletKind.method]
-/// exactly; `CARD` is not needed. Google Pay also needs the order's
-/// non-blank `gateway` and `gatewayMerchantId`. Apple Pay does not use the
-/// order's `applePay` part. An order without an amount or a currency cannot
-/// fill the wallet's sheet either.
-String? walletOrderProblem(PayriffClientOrder order, WalletKind kind) {
+/// `CREATED` or `PENDING`, and the order needs an amount and a currency to
+/// fill the wallet's sheet. Its `paymentMethods` are not checked (revision
+/// 10): the app's configuration decides. Google Pay also needs a gateway
+/// merchant id, from the order or [googlePay] ([googlePayGateway]). Apple
+/// Pay does not use the order's `applePay` part.
+String? walletOrderProblem(
+  PayriffClientOrder order,
+  WalletKind kind, {
+  PayriffGooglePayConfig? googlePay,
+}) {
   if (order.status != PayriffPaymentStatus.created &&
       order.status != PayriffPaymentStatus.pending) {
     return 'order status ${order.rawStatus ?? 'unknown'}';
   }
-  if (!order.paymentMethods.contains(kind.method)) {
-    return '${kind.method} not in paymentMethods';
-  }
-  if (kind == WalletKind.googlePay && googlePayGateway(order) == null) {
-    return 'no googlePay gateway parameters';
+  if (kind == WalletKind.googlePay &&
+      googlePayGateway(order, googlePay) == null) {
+    return 'no gatewayMerchantId';
   }
   if (formatAmount2(order.amount) == null) return 'no amount';
   if (walletCurrencyCode(order) == null) return 'no currency';
   return null;
 }
 
-/// The order's Google Pay gateway parameters, trimmed; `null` when either
-/// is missing or blank.
+/// The default tokenization `gateway` of Google Pay (CONTRACT §17.5).
+const String googlePayDefaultGateway = 'payriff';
+
+/// CONTRACT §17.5 (`wallet.json` → `googlePayGateway`): Google Pay's
+/// tokenization parameters, each trimmed and skipped when blank.
+/// `gatewayMerchantId` is the order's, else [config]'s; `gateway` the
+/// order's, else [config]'s, else `payriff`. `null` without a
+/// `gatewayMerchantId`: Google Pay is then not offered.
 ({String gateway, String gatewayMerchantId})? googlePayGateway(
   PayriffClientOrder order,
+  PayriffGooglePayConfig? config,
 ) {
-  final String? gateway = trimToNull(order.googlePay?.gateway);
-  final String? merchant = trimToNull(order.googlePay?.gatewayMerchantId);
-  if (gateway == null || merchant == null) return null;
+  final String? merchant =
+      trimToNull(order.googlePay?.gatewayMerchantId) ??
+      trimToNull(config?.gatewayMerchantId);
+  if (merchant == null) return null;
+  final String gateway =
+      trimToNull(order.googlePay?.gateway) ??
+      trimToNull(config?.gateway) ??
+      googlePayDefaultGateway;
   return (gateway: gateway, gatewayMerchantId: merchant);
 }
 
@@ -208,10 +222,14 @@ Map<String, Object?> googlePayIsReadyToPayRequest() => <String, Object?>{
 
 /// The `allowedPaymentMethods` of the `paymentDataRequest`, also given to
 /// the Google Pay button (`buttonAllowedPaymentMethods`): the `CARD` method
-/// with the order's gateway. `null` without the gateway parameters.
-List<Object?>? googlePayAllowedPaymentMethods(PayriffClientOrder order) {
+/// with the gateway parameters of [order] and [config]
+/// ([googlePayGateway]). `null` without a gateway merchant id.
+List<Object?>? googlePayAllowedPaymentMethods(
+  PayriffClientOrder order,
+  PayriffGooglePayConfig? config,
+) {
   final ({String gateway, String gatewayMerchantId})? gateway =
-      googlePayGateway(order);
+      googlePayGateway(order, config);
   if (gateway == null) return null;
   return <Object?>[
     <String, Object?>{
@@ -236,7 +254,7 @@ Map<String, Object?>? googlePayPaymentDataRequest({
   required PayriffGooglePayConfig config,
   String? appName,
 }) {
-  final List<Object?>? methods = googlePayAllowedPaymentMethods(order);
+  final List<Object?>? methods = googlePayAllowedPaymentMethods(order, config);
   final String? amount = formatAmount2(order.amount);
   final String? currency = walletCurrencyCode(order);
   if (methods == null || amount == null || currency == null) return null;

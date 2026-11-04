@@ -51,7 +51,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.5`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.6`).
 
 Then complete the [platform setup](#platform-setup).
 
@@ -372,21 +372,37 @@ Payriff.configure(const PayriffConfig(
   googlePay: PayriffGooglePayConfig(
     merchantId: 'BCR2DN4T…', // optional: from the Google Pay & Wallet Console
     merchantName: 'Example Shop', // optional
+    // Payriff's merchant id for Google Pay, from Payriff. Needed when the
+    // order carries no googlePay object; the order's wins when it has one.
+    gatewayMerchantId: 'PRF…',
+    gateway: 'payriff', // the default
   ),
 ));
 ```
+
+- **The configuration decides, on the wallet's own platform.** A wallet
+  appears whenever you configure it: the order's `paymentMethods` list is
+  not checked. Apple Pay appears only on iOS and Google Pay only on Android,
+  whatever you configure; the other platform's configuration is ignored.
+  Without a configuration no wallet appears. Whether Payriff accepts the
+  wallet's token for your account is decided when the payment is sent.
+- **Google Pay needs `gatewayMerchantId`** in `PayriffGooglePayConfig` when
+  Payriff's order has no `googlePay` object (the order's
+  `gatewayMerchantId` and `gateway` win when it has one). Without either,
+  Google Pay is not offered. `gateway` is the order's, else the
+  configuration's, else `payriff`.
 
 - `merchantIdentifier` must start with `merchant.`; an invalid one logs a
   warning (`Invalid Apple Pay configuration: …`) and leaves Apple Pay off.
   Card payments are never affected.
 - The wallet sheet's merchant name is `merchantName`, else the order's
   merchant name, else your app's display name.
-- The wallet button appears only when all of these hold: its configuration
-  is set, the device is not compromised, the order is `CREATED` or
-  `PENDING` and lists `APPLE_PAY` or `GOOGLE_PAY` in `paymentMethods`
-  (Google Pay also needs the order's gateway parameters), and the device can
-  pay (Apple Pay with Visa or Mastercard, and mada in region `sa`; Google
-  Pay's `isReadyToPay`).
+- The wallet button appears only when all of these hold: the app runs on
+  the wallet's platform and its configuration is set, the device is not
+  compromised, the order is `CREATED` or `PENDING` with an amount and a
+  currency (Google Pay also needs a `gatewayMerchantId` from the order or
+  the configuration), and the device can pay (Apple Pay with Visa or
+  Mastercard, and mada in region `sa`; Google Pay's `isReadyToPay`).
   Until then the view looks exactly as without wallets. With
   `enableLogging`, a `debug` line says why: `Apple Pay offered: false (…)`.
 - Closing the wallet's sheet without paying reports nothing: the customer
@@ -903,7 +919,7 @@ See [example/README.md](example/README.md).
 | `deviceCompromised` on a test device | The device is rooted or jailbroken (Android emulator images with `su` count too), a hooking tool such as Frida runs, a debugger is attached to a release build, or the check could not complete (`check failed`, for example in widget tests, which have no native plugin). Turn on `enableLogging` to see which signal matched. For development and tests, set `allowCompromisedDevices: true` and run a debug build. |
 | `deviceCompromised` although `allowCompromisedDevices` is `true` | The app is a profile or release build (for example `flutter run --release`, or an app from TestFlight or a store). The flag works only in debug builds; the log says "PayriffConfig.allowCompromisedDevices is ignored outside debug builds". Run a debug build on the test device. |
 | `presentationFailed` | The `BuildContext` has no `Navigator` above it (for example a context above `MaterialApp`). |
-| No Apple Pay or Google Pay button | Turn on `enableLogging`: the `debug` line `Apple Pay offered: false (…)` names the first condition that failed, such as a missing configuration, an order without `APPLE_PAY` or `GOOGLE_PAY`, or a device without a Visa or Mastercard card in its wallet. |
+| No Apple Pay or Google Pay button | Turn on `enableLogging`: the `debug` line `Apple Pay offered: false (…)` names the first condition that failed, such as a missing configuration, the other platform's wallet, a Google Pay order without a `gatewayMerchantId` (set `PayriffGooglePayConfig.gatewayMerchantId`), or a device without a Visa or Mastercard card in its wallet. |
 | `walletFailed`: "Apple Pay could not be shown." | The merchant ID in `PayriffApplePayConfig` is not in the app's Apple Pay capability (`com.apple.developer.in-app-payments`), or the app was signed without it. |
 | Payment lost after the app was killed | The app process ended mid-payment. Reconcile the order on your server. |
 

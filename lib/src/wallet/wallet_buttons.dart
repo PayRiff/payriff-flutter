@@ -26,8 +26,9 @@ const double _unboundedWidth = 240;
 /// It reads the order and shows Apple's own button only on iOS and only
 /// when Apple Pay is offered (CONTRACT §17.3): `PayriffConfig.applePay` is
 /// set and valid, the device is not compromised, the order is `CREATED` or
-/// `PENDING` and accepts `APPLE_PAY`, and the device can pay with Visa or
-/// Mastercard. Until that is decided, and whenever it is not offered (on
+/// `PENDING` with an amount and a currency, and the device can pay with Visa
+/// or Mastercard. The order's `paymentMethods` are not checked (revision
+/// 10). Until that is decided, and whenever it is not offered (on
 /// Android always), it takes no space; [onAvailabilityChange] gets each
 /// decision. An order that does not load only makes it unavailable.
 ///
@@ -99,8 +100,11 @@ class PayriffApplePayButton extends StatelessWidget {
 /// It reads the order and shows Google's own button only on Android and
 /// only when Google Pay is offered (CONTRACT §17.3):
 /// `PayriffConfig.googlePay` is set, the device is not compromised, the
-/// order is `CREATED` or `PENDING`, accepts `GOOGLE_PAY` and has its Google
-/// Pay gateway parameters, and Google Pay is ready on the device. Until that
+/// order is `CREATED` or `PENDING` with an amount and a currency, a gateway
+/// merchant id comes from the order or
+/// `PayriffGooglePayConfig.gatewayMerchantId`, and Google Pay is ready on
+/// the device. The order's `paymentMethods` are not checked (revision 10).
+/// Until that
 /// is decided, and whenever it is not offered (on iOS always), it takes no
 /// space; [onAvailabilityChange] gets each decision. An order that does not
 /// load only makes it unavailable.
@@ -158,7 +162,10 @@ class PayriffGooglePayButton extends StatelessWidget {
     height: style.height,
     cornerRadius: style.cornerRadius,
     params: (bool dark, double cornerRadius, PayriffClientOrder order) {
-      final List<Object?>? methods = googlePayAllowedPaymentMethods(order);
+      final List<Object?>? methods = googlePayAllowedPaymentMethods(
+        order,
+        Payriff.config?.googlePay,
+      );
       return methods == null
           ? null
           : googlePayButtonParams(
