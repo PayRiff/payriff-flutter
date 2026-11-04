@@ -33,52 +33,64 @@ import 'wallet_rules.dart';
 /// CONTRACT §17.3: whether [kind] is offered for [order], which was loaded
 /// after the device check of the view or button passed (item 2). Checks, in
 /// this order, the platform and [config] (item 1), the order (item 3) and
-/// whether the device can pay (item 4: `canMakePayments` or
-/// `isReadyToPay`), and logs the decision at `debug` level with the first
-/// condition that failed. Never throws.
+/// whether the device can pay (item 4: [walletDeviceCanPay]), and logs the
+/// decision at `debug` level with the first condition that failed. Never
+/// throws. The payment view runs the device check alongside the order read
+/// instead (§20.3).
 Future<bool> decideWalletOffer({
   required WalletKind kind,
   required PayriffClientOrder order,
   required PayriffConfig? config,
   required SdkLogger logger,
 }) async {
-  final String? problem = await _walletProblem(kind, order, config);
+  String? problem = walletOfferProblem(kind, order, config);
+  // No problem means a valid configuration, so [config] is set.
+  if (problem == null && !await walletDeviceCanPay(kind, config!)) {
+    problem = walletDeviceProblem(kind);
+  }
   logger.debug(walletDecisionLine(kind, problem));
   return problem == null;
 }
 
-Future<String?> _walletProblem(
+/// CONTRACT §17.3 items 1 and 3, without asking the device: why [kind] is
+/// not offered for [order] on this platform with [config], or `null` when
+/// only the device check (item 4, [walletDeviceCanPay]) is left.
+String? walletOfferProblem(
   WalletKind kind,
   PayriffClientOrder order,
   PayriffConfig? config,
-) async {
+) {
   if (platformWallet != kind) return 'not available on this platform';
   final String? configProblem = walletConfigProblem(config, kind);
   if (configProblem != null || config == null) {
     return configProblem ?? 'not configured';
   }
-  final String? orderProblem = walletOrderProblem(
-    order,
-    kind,
-    googlePay: config.googlePay,
-  );
-  if (orderProblem != null) return orderProblem;
-  switch (kind) {
-    case WalletKind.applePay:
-      final bool canPay = await NativeBridge.applePayCanMakePayments(
+  return walletOrderProblem(order, kind, googlePay: config.googlePay);
+}
+
+/// CONTRACT §17.3 item 4: whether the device can pay with [kind]
+/// (`canMakePayments` or `isReadyToPay`), for a [config] whose [kind] is
+/// set and valid. It does not need the order. Never throws: an error counts
+/// as `false`.
+Future<bool> walletDeviceCanPay(WalletKind kind, PayriffConfig config) =>
+    switch (kind) {
+      WalletKind.applePay => NativeBridge.applePayCanMakePayments(
         // CONTRACT §19.4: mada too in region sa.
         networks: applePayNetworksFor(config.region),
         capabilities: applePayCapabilities,
-      );
-      return canPay ? null : 'the device cannot pay with Visa or Mastercard';
-    case WalletKind.googlePay:
-      final bool ready = await NativeBridge.googlePayIsReady(
+      ),
+      WalletKind.googlePay => NativeBridge.googlePayIsReady(
         environment: googlePayEnvironment(config),
         request: jsonEncode(googlePayIsReadyToPayRequest()),
-      );
-      return ready ? null : 'Google Pay is not ready on this device';
-  }
-}
+      ),
+    };
+
+/// The reason of the availability line when [walletDeviceCanPay] answered
+/// `false`.
+String walletDeviceProblem(WalletKind kind) => switch (kind) {
+  WalletKind.applePay => 'the device cannot pay with Visa or Mastercard',
+  WalletKind.googlePay => 'Google Pay is not ready on this device',
+};
 
 /// Runs one [kind] payment of [order] after a tap on its button (CONTRACT
 /// §17.5, §17.6) and completes with the result, or with `null` when the

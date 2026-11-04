@@ -51,7 +51,7 @@ minimum), but those versions are unsupported and untested.
 flutter pub add payriff
 ```
 
-Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.6`).
+Until 1.0.0, this adds the release candidate (`payriff: ^1.0.0-rc.7`).
 
 Then complete the [platform setup](#platform-setup).
 
@@ -333,10 +333,11 @@ PayriffPaymentView(
 ## Apple Pay and Google Pay
 
 The payment view shows the wallet's official button above the card form,
-with an "Or pay by card" divider: Apple Pay on iOS (PassKit) and Google Pay
-on Android (the Google Pay API). The wallet's sheet returns an encrypted
-token, which the SDK sends to Payriff like a card; 3-D Secure, status
-polling and the `PayriffResult` are the same as for cards.
+with an "Or pay by card" divider, or under the Pay button
+(`walletPlacement`): Apple Pay on iOS (PassKit) and Google Pay on Android
+(the Google Pay API). The wallet's sheet returns an encrypted token, which
+the SDK sends to Payriff like a card; 3-D Secure, status polling and the
+`PayriffResult` are the same as for cards.
 
 ### Merchant setup
 
@@ -405,6 +406,14 @@ Payriff.configure(const PayriffConfig(
   Mastercard, and mada in region `sa`; Google Pay's `isReadyToPay`).
   Until then the view looks exactly as without wallets. With
   `enableLogging`, a `debug` line says why: `Apple Pay offered: false (…)`.
+- The view asks the device when it appears, while it reads the order, and
+  shows the wallet button together with the loaded order, in its place and
+  without animation. It waits for the device's answer at most 1 s after
+  the order arrived; a slower answer means no wallet for that order, and
+  the `debug` line says `the device check did not answer in time`.
+- Unless its style sets a `height`, the wallet button is exactly as high as
+  the Pay button, at every text size. Pay's title stays one line; a long
+  one is truncated.
 - Closing the wallet's sheet without paying reports nothing: the customer
   can try again or pay by card. A wallet that fails returns
   `failed(WALLET_FAILED)`, and the order can still be paid by card.
@@ -435,6 +444,8 @@ PayriffPaymentView(
       cornerRadius: 8,
     ),
     walletDividerText: 'Or pay with a card',
+    // Or: the wallet button 12 below Pay, without the divider.
+    // walletPlacement: PayriffWalletPlacement.belowPayButton,
   ),
 )
 ```
@@ -443,9 +454,10 @@ PayriffPaymentView(
 |---|---|
 | `type` | Apple: `plain` (default), `buy`, `checkout`, `book`, `donate`, `order`, `subscribe`. Google: `plain` (default), `buy`, `pay`, `checkout`, `book`, `donate`, `order`, `subscribe` |
 | `theme` | Apple: `automatic` (default: black on a light page, white on a dark one), `black`, `white`, `whiteOutline`. Google: `automatic` (default: dark on a light page, light on a dark one), `dark`, `light` |
-| `cornerRadius`, `height` | `null`: the view's `buttonCornerRadius` and `buttonHeight` (16 and 44), or 16 and 44 for a standalone button. A height below 40 is raised to 40 |
-| `walletDividerText` (view) | `null`: "Or pay by card" in the view's language |
-| `showWalletDivider` (view) | `true`; `false` puts the form 16 below the wallet button |
+| `cornerRadius`, `height` | `null`: the view's `buttonCornerRadius` (16) and the Pay button's height as laid out (at least `buttonHeight`, 44, and taller at large text sizes), or 16 and 44 for a standalone button. A height below 40 is raised to 40 |
+| `walletPlacement` (view) | `PayriffWalletPlacement.top` (default): above the card form, with the divider. `belowPayButton`: 12 below Pay, without the divider; the error line, the badges and the secure line follow under it |
+| `walletDividerText` (view) | `null`: "Or pay by card" in the view's language. Only with `top` |
+| `showWalletDivider` (view) | `true`; `false` puts the form 16 below the wallet button. Only with `top` |
 
 ### Standalone buttons
 

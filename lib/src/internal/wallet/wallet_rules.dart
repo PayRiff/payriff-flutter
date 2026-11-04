@@ -174,6 +174,15 @@ String walletDecisionLine(WalletKind kind, String? problem) =>
     '${kind.label} offered: ${problem == null}'
     '${problem == null ? '' : ' ($problem)'}';
 
+/// How long the payment view waits for the device check (CONTRACT §17.3
+/// item 4) after the order arrived, before it shows the order without the
+/// wallet (§20.3, `wallet.json` → `viewReveal.waitMs`).
+const Duration walletDeviceCheckWait = Duration(seconds: 1);
+
+/// The reason of the availability line when the device check did not
+/// answer within [walletDeviceCheckWait] (CONTRACT §20.3).
+const String walletDeviceCheckLate = 'the device check did not answer in time';
+
 // ---------------------------------------------------------------------------
 // Shared values (§17.4)
 
@@ -457,6 +466,17 @@ double walletButtonHeight(double? height, double fallback) {
       : (fallback.isFinite ? fallback : walletDefaultButtonHeight);
   return value >= walletMinButtonHeight ? value : walletMinButtonHeight;
 }
+
+/// The wallet button's height in the payment view (CONTRACT §20.2,
+/// `wallet.json` → `viewWalletHeight`): the wallet style's [styleHeight],
+/// else [payButtonHeight], the Pay button's height as laid out (at least
+/// the view's `buttonHeight`, taller at large text sizes); raised to
+/// [walletMinButtonHeight] either way. The view lays the wallet button out
+/// by this rule in Pay's layout pass.
+double paymentViewWalletButtonHeight(
+  double? styleHeight,
+  double payButtonHeight,
+) => walletButtonHeight(styleHeight, payButtonHeight);
 
 /// The corner radius: [radius], else [fallback]; a negative radius counts
 /// as 0.

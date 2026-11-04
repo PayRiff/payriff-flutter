@@ -2,11 +2,13 @@
 // normalisation, availability, amounts, Google Pay environments and JSON
 // (compared as JSON values), the Apple Pay request, the wallet /pay request
 // (headers present and absent, body), the Apple Pay sheet table, the button
-// styles, the Apple Pay networks, and revision 10's platform guard and
-// Google Pay gateway parameters. No network: /pay goes to a mock client.
+// styles, the Apple Pay networks, revision 10's platform guard and Google
+// Pay gateway parameters, and revision 11's view placement, wallet height
+// and reveal. No network: the Client API is a mock client.
+import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -787,6 +789,224 @@ void main() {
     );
   });
 
+  test('viewPlacement: the parts and their gaps in every case (CONTRACT '
+      '§20.1); wallet_view_test.dart lays every case out', () {
+    final Map<String, Object?> section =
+        _v['viewPlacement']! as Map<String, Object?>;
+    final List<Map<String, Object?>> cases = _list(section['cases']);
+    expect(cases, hasLength(greaterThan(5)));
+    for (final Map<String, Object?> c in cases) {
+      final Map<String, Object?> style = c['style']! as Map<String, Object?>;
+      final List<PaymentViewSlot> plan = paymentViewPlan(
+        placement: PayriffWalletPlacement.values.byName(
+          style['walletPlacement']! as String,
+        ),
+        walletShown: c['walletShown']! as bool,
+        showWalletDivider: style['showWalletDivider']! as bool,
+        errorShown: c['errorShown']! as bool,
+        showBadges: style['showBadges']! as bool,
+        showSecureNote: style['showSecureNote']! as bool,
+      );
+      expect(
+        <(String, double)>[
+          for (final PaymentViewSlot slot in plan)
+            (slot.part.name, slot.gapAbove),
+        ],
+        <(String, double)>[
+          for (final Map<String, Object?> e in _list(c['expect']))
+            (e['part']! as String, (e['gapAbove']! as num).toDouble()),
+        ],
+        reason: '${c['name']}',
+      );
+    }
+    expect(
+      PaymentViewPart.values.map((PaymentViewPart p) => p.name),
+      unorderedEquals(<String>{
+        for (final Map<String, Object?> c in cases)
+          for (final Map<String, Object?> e in _list(c['expect']))
+            e['part']! as String,
+      }),
+    );
+    expect(
+      const PayriffPaymentViewStyle().walletPlacement,
+      PayriffWalletPlacement.top,
+    );
+  });
+
+  test('viewWalletHeight: the style\'s height, else Pay\'s as laid out, at '
+      'least 40 (CONTRACT §20.2)', () {
+    final Map<String, Object?> section =
+        _v['viewWalletHeight']! as Map<String, Object?>;
+    expect(walletMinButtonHeight, section['minHeight']);
+    final List<Map<String, Object?>> cases = _list(section['cases']);
+    expect(cases, isNotEmpty);
+    for (final Map<String, Object?> c in cases) {
+      expect(
+        paymentViewWalletButtonHeight(
+          (c['styleHeight'] as num?)?.toDouble(),
+          (c['payButtonHeight']! as num).toDouble(),
+        ),
+        (c['expect']! as num).toDouble(),
+        reason: '${c['name']}',
+      );
+    }
+  });
+
+  group('viewReveal: the order and the wallet decision are applied together '
+      '(CONTRACT §20.3)', () {
+    final Map<String, Object?> section =
+        _v['viewReveal']! as Map<String, Object?>;
+    // Each view caches the app id in its test's zone.
+    setUp(Payriff.debugReset);
+    tearDown(Payriff.debugReset);
+
+    test('the wait and the availability line', () {
+      expect(
+        walletDeviceCheckWait,
+        Duration(milliseconds: section['waitMs']! as int),
+      );
+      expect(
+        walletDecisionLine(WalletKind.googlePay, walletDeviceCheckLate),
+        'Google Pay offered: false (the device check did not answer in time)',
+      );
+    });
+
+    // When the order read answers, counted from the view's first frame. The
+    // device check answers deviceAnswerMs from then.
+    const int orderMs = 500;
+    // The plugin's channel answers asynchronously on both platforms, so
+    // Flutter on iOS waits like Android (the vectors' iOS note is about
+    // the native iOS SDK, whose canMakePayments is synchronous).
+    for (final (TargetPlatform platform, WalletKind kind, String check)
+        in <(TargetPlatform, WalletKind, String)>[
+          (TargetPlatform.android, WalletKind.googlePay, 'googlePayIsReady'),
+          (TargetPlatform.iOS, WalletKind.applePay, 'applePayCanMakePayments'),
+        ]) {
+      for (final Map<String, Object?> c in _list(section['cases'])) {
+        testWidgets('${kind.label}: ${c['name']}', (WidgetTester tester) async {
+          final Map<String, Object?> expected =
+              c['expect']! as Map<String, Object?>;
+          final bool configured = c['walletConfigured']! as bool;
+          final bool loadFails = c['loadFails']! as bool;
+          final bool walletShown = expected['walletShown']! as bool;
+          final int? answerMs = c['deviceAnswerMs'] as int?;
+          final bool canPay = c['deviceAnswer'] as bool? ?? false;
+          final NativeCalls native = NativeCalls()
+            ..deviceCheckDelay = answerMs == null
+                ? null
+                : Duration(milliseconds: orderMs + answerMs)
+            ..googlePayReady = canPay
+            ..applePayCanPay = canPay
+            ..install();
+          final FakeClientBackend backend =
+              FakeClientBackend(
+                  // An order the wallet cannot pay (§17.3 item 3): it is
+                  // paid already.
+                  orderStatus: c['orderOffered'] == true
+                      ? 'CREATED'
+                      : 'APPROVED',
+                  googlePay: testGooglePayGateway,
+                )
+                ..orderDelay = const Duration(milliseconds: orderMs)
+                ..orderFails = loadFails
+                ..install();
+          final FakePlatformViews views = FakePlatformViews()..install();
+          final List<String> logs = <String>[];
+          final StreamSubscription<PayriffLogEntry> sub = Payriff.logStream
+              .listen((PayriffLogEntry e) => logs.add(e.message));
+          addTearDown(sub.cancel);
+          Payriff.configure(
+            PayriffConfig(
+              environment: PayriffEnvironment.sandbox,
+              publishableKey: testPublishableKey,
+              enableLogging: true,
+              applePay: configured
+                  ? const PayriffApplePayConfig(
+                      merchantIdentifier: 'merchant.com.example.shop',
+                    )
+                  : null,
+              googlePay: configured ? const PayriffGooglePayConfig() : null,
+            ),
+          );
+          final List<String> events = <String>[];
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: PayriffPaymentView(
+                  orderId: testOrderId,
+                  clientSecret: testClientSecret,
+                  language: PayriffLanguage.en,
+                  onResult: (_) => events.add('result'),
+                  onOrderLoaded: (_) => events.add('loaded'),
+                  onLoadFailed: (_) => events.add('loadFailed'),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+
+          // The device check was asked when the view appeared, before the
+          // order answered.
+          expect(
+            native.named(check),
+            hasLength(expected['deviceCheckStarted'] == true ? 1 : 0),
+          );
+          expect(backend.requests, hasLength(1));
+          expect(backend.ordersAnswered, 0);
+
+          bool applied() => loadFails
+              ? find.byKey(paymentViewErrorKey).evaluate().isNotEmpty
+              : find.text('Pay 10.50 AZN').evaluate().isNotEmpty;
+          final int appliedAt = orderMs + (expected['appliedAfterMs']! as int);
+          await tester.pump(Duration(milliseconds: appliedAt - 1));
+          expect(backend.ordersAnswered, appliedAt - 1 < orderMs ? 0 : 1);
+          expect(applied(), isFalse);
+          expect(find.byKey(paymentViewWalletButtonKey), findsNothing);
+          expect(events, isEmpty);
+
+          // One update: the order, the decision, then the callback.
+          await tester.pump(const Duration(milliseconds: 1));
+          expect(applied(), isTrue);
+          expect(
+            find.byKey(paymentViewWalletButtonKey),
+            walletShown ? findsOneWidget : findsNothing,
+          );
+          expect(events, <String>[loadFails ? 'loadFailed' : 'loaded']);
+
+          // Nothing changes later for this order, whenever the check answers.
+          await tester.pump(const Duration(seconds: 3));
+          expect(
+            find.byKey(paymentViewWalletButtonKey),
+            walletShown ? findsOneWidget : findsNothing,
+          );
+          expect(views.created, hasLength(walletShown ? 1 : 0));
+          expect(events, hasLength(1));
+          final List<String> lines = logs
+              .where((String l) => l.startsWith('${kind.label} offered:'))
+              .toList();
+          if (loadFails) {
+            expect(lines, isEmpty);
+          } else {
+            expect(lines, hasLength(1));
+            expect(
+              lines.single,
+              startsWith('${kind.label} offered: $walletShown'),
+            );
+            if (configured && c['orderOffered'] == true && !walletShown) {
+              expect(
+                lines.single,
+                answerMs == null ||
+                        answerMs > walletDeviceCheckWait.inMilliseconds
+                    ? '${kind.label} offered: false ($walletDeviceCheckLate)'
+                    : walletDecisionLine(kind, walletDeviceProblem(kind)),
+              );
+            }
+          }
+        }, variant: TargetPlatformVariant.only(platform));
+      }
+    }
+  });
+
   test('every section of wallet.json is asserted here', () {
     expect(_v.keys.toSet(), <String>{
       'description',
@@ -803,6 +1023,9 @@ void main() {
       'applePayNetworks',
       'platformGuard',
       'googlePayGateway',
+      'viewPlacement',
+      'viewWalletHeight',
+      'viewReveal',
     });
   });
 }

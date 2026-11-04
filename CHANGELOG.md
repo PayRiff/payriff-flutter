@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.0-rc.7 - 2026-11-05
+
+### Added
+
+- `PayriffPaymentViewStyle.walletPlacement` (CONTRACT revision 11):
+  `PayriffWalletPlacement.top`, the default and the layout so far, or
+  `belowPayButton`, which puts the Apple Pay or Google Pay button 12 below
+  Pay, without the "Or pay by card" divider. Without a wallet both look the
+  same.
+
+### Changed
+
+- The wallet button in `PayriffPaymentView` follows the Pay button's height
+  as laid out, at every text size and while Pay shows its spinner (at least
+  40). Before, it kept `buttonHeight` while Pay grew with large text. A
+  wallet style `height` still wins. Pay's title stays one line.
+- The wallet button appears together with the loaded order, in its place,
+  without the slide. The device check (`canMakePayments` or
+  `isReadyToPay`) runs alongside the order read; once the order is in, the
+  view waits for it at most 1 s, else shows the order without the wallet
+  (the debug line says `the device check did not answer in time`).
+  `onOrderLoaded` and `onLoadFailed` come right after that update.
+
 ## 1.0.0-rc.6 - 2026-11-04
 
 ### Changed

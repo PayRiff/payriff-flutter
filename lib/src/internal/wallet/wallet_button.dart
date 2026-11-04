@@ -33,8 +33,10 @@ class WalletPlatformButton extends StatefulWidget {
   /// The creation parameters of the native button.
   final Map<String, Object?> params;
 
-  /// The height; the width is the parent's.
-  final double height;
+  /// The height; the width is the parent's. `null` takes the parent's
+  /// height too, which must then be bounded: the payment view gives its
+  /// wallet button the Pay button's height that way (CONTRACT §20.2).
+  final double? height;
 
   /// Whether taps reach [onTap].
   final bool enabled;

@@ -122,6 +122,18 @@ class NativeCalls {
   /// The reply of `googlePayIsReady`.
   bool googlePayReady = true;
 
+  /// How long `applePayCanMakePayments` and `googlePayIsReady` take to
+  /// answer, on the test's fake clock (CONTRACT §20.3); `null` never
+  /// answers. [Duration.zero] answers at once.
+  Duration? deviceCheckDelay = Duration.zero;
+
+  Future<void> _deviceCheckAnswer() {
+    final Duration? delay = deviceCheckDelay;
+    if (delay == null) return Completer<void>().future;
+    if (delay == Duration.zero) return Future<void>.value();
+    return Future<void>.delayed(delay);
+  }
+
   /// The reply of `googlePayLoad`: payment data with [testGooglePayToken] by
   /// default. A [Future] replies when it completes.
   Object? googlePayLoadReply = <String, Object?>{
@@ -183,6 +195,7 @@ class NativeCalls {
             case 'appName':
               return appName;
             case 'applePayCanMakePayments':
+              await _deviceCheckAnswer();
               return applePayCanPay;
             case 'applePayPresent':
               final Object? reply = applePayPresentReply;
@@ -194,6 +207,7 @@ class NativeCalls {
                 'status': (call.arguments as Map<Object?, Object?>)['status'],
               };
             case 'googlePayIsReady':
+              await _deviceCheckAnswer();
               return googlePayReady;
             case 'googlePayLoad':
               final Object? reply = googlePayLoadReply;
@@ -256,6 +270,16 @@ class FakeClientBackend {
   /// `0` for no response.
   final List<int> payFailures = <int>[];
 
+  /// How long the order read takes, on the test's fake clock (CONTRACT
+  /// §20.3).
+  Duration orderDelay = Duration.zero;
+
+  /// When true, the order read gets no response (`NETWORK_ERROR`).
+  bool orderFails = false;
+
+  /// The order reads answered so far.
+  int ordersAnswered = 0;
+
   final List<http.Request> requests = <http.Request>[];
 
   List<http.Request> to(String suffix) =>
@@ -304,6 +328,9 @@ class FakeClientBackend {
         'currency': 'AZN',
       });
     }
+    if (orderDelay > Duration.zero) await Future<void>.delayed(orderDelay);
+    ordersAnswered++;
+    if (orderFails) throw http.ClientException('offline');
     return ok(<String, Object?>{
       'orderId': testOrderId,
       'amount': 10.5,

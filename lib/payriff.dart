@@ -35,7 +35,8 @@ export 'src/card/client_order.dart'
         PayriffClientOrderApplePay,
         PayriffClientOrderGooglePay;
 export 'src/card/payment_view.dart' show PayriffPaymentView;
-export 'src/card/payment_view_style.dart' show PayriffPaymentViewStyle;
+export 'src/card/payment_view_style.dart'
+    show PayriffPaymentViewStyle, PayriffWalletPlacement;
 export 'src/config.dart'
     show
         PayriffApplePayConfig,

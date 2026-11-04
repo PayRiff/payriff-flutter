@@ -4,7 +4,22 @@ import 'package:flutter/painting.dart';
 import '../wallet/wallet_button_style.dart';
 import 'card_form_style.dart';
 
-/// The look of `PayriffPaymentView` (CONTRACT §16.14, §17.9, §18).
+/// Where `PayriffPaymentView` shows the Apple Pay or Google Pay button
+/// (CONTRACT §20.1). Without a wallet the view looks the same with either.
+enum PayriffWalletPlacement {
+  /// Above the card form, the default: the wallet button, the "Or pay by
+  /// card" divider 16 below it (unless `showWalletDivider` is `false`), then
+  /// the card form 16 below.
+  top,
+
+  /// Under the Pay button: the card form and Pay first, then the wallet
+  /// button 12 below Pay. The error line, the badges and the secure line
+  /// follow below the wallet button. There is no divider, so
+  /// `showWalletDivider` and `walletDividerText` have no effect.
+  belowPayButton,
+}
+
+/// The look of `PayriffPaymentView` (CONTRACT §16.14, §17.9, §18, §20).
 ///
 /// Every property is optional. The defaults reproduce the card part of
 /// Payriff's hosted payment page (pay.payriff.com) in the system font, and
@@ -50,6 +65,7 @@ final class PayriffPaymentViewStyle {
     this.googlePayButton = const PayriffGooglePayButtonStyle(),
     this.walletDividerText,
     this.showWalletDivider = true,
+    this.walletPlacement = PayriffWalletPlacement.top,
   }) : assert(buttonHeight >= 0),
        assert(buttonCornerRadius >= 0);
 
@@ -69,7 +85,8 @@ final class PayriffPaymentViewStyle {
   /// The spinner shown while paying uses its colour.
   final TextStyle? buttonTextStyle;
 
-  /// The height of the Pay button; it grows with large text. Defaults to 44.
+  /// The height of the Pay button; it grows with large text. Its title stays
+  /// one line, and a long one is truncated. Defaults to 44.
   final double buttonHeight;
 
   /// The radius of the Pay button's corners. Defaults to 16.
@@ -143,28 +160,37 @@ final class PayriffPaymentViewStyle {
   /// colour for the lines of the wallet divider.
   final PayriffCardFormStyle formStyle;
 
-  /// The Apple Pay button above the card form, on iOS when
+  /// The Apple Pay button of the view (see [walletPlacement]), on iOS when
   /// `PayriffConfig.applePay` is set and Apple Pay is offered for the order.
-  /// Its `height` and `cornerRadius` default to [buttonHeight] and
+  /// Its `height` defaults to the Pay button's height as laid out, at every
+  /// text size (CONTRACT §20.2), and its `cornerRadius` to
   /// [buttonCornerRadius].
   final PayriffApplePayButtonStyle applePayButton;
 
-  /// The Google Pay button above the card form, on Android when
-  /// `PayriffConfig.googlePay` is set and Google Pay is offered for the
-  /// order. Its `height` and `cornerRadius` default to [buttonHeight] and
+  /// The Google Pay button of the view (see [walletPlacement]), on Android
+  /// when `PayriffConfig.googlePay` is set and Google Pay is offered for the
+  /// order. Its `height` defaults to the Pay button's height as laid out, at
+  /// every text size (CONTRACT §20.2), and its `cornerRadius` to
   /// [buttonCornerRadius].
   final PayriffGooglePayButtonStyle googlePayButton;
 
   /// The text of the divider between the wallet button and the card form,
   /// in place of "Or pay by card". It is shown as it is in every language,
   /// without white space around it. `null` or blank: "Or pay by card" in the
-  /// view's language.
+  /// view's language. Only with [PayriffWalletPlacement.top].
   final String? walletDividerText;
 
   /// Whether to show the divider ("Or pay by card", with a line on each
   /// side) between the wallet button and the card form. Defaults to `true`.
-  /// Without it the form follows the wallet button 16 below.
+  /// Without it the form follows the wallet button 16 below. Only with
+  /// [PayriffWalletPlacement.top].
   final bool showWalletDivider;
+
+  /// Where the Apple Pay or Google Pay button goes (CONTRACT §20.1):
+  /// [PayriffWalletPlacement.top], the default, above the card form with
+  /// the divider, or [PayriffWalletPlacement.belowPayButton], 12 below the
+  /// Pay button and without the divider.
+  final PayriffWalletPlacement walletPlacement;
 
   /// A copy with the given properties replaced.
   PayriffPaymentViewStyle copyWith({
@@ -190,6 +216,7 @@ final class PayriffPaymentViewStyle {
     PayriffGooglePayButtonStyle? googlePayButton,
     String? walletDividerText,
     bool? showWalletDivider,
+    PayriffWalletPlacement? walletPlacement,
   }) => PayriffPaymentViewStyle(
     backgroundColor: backgroundColor ?? this.backgroundColor,
     padding: padding ?? this.padding,
@@ -214,6 +241,7 @@ final class PayriffPaymentViewStyle {
     googlePayButton: googlePayButton ?? this.googlePayButton,
     walletDividerText: walletDividerText ?? this.walletDividerText,
     showWalletDivider: showWalletDivider ?? this.showWalletDivider,
+    walletPlacement: walletPlacement ?? this.walletPlacement,
   );
 
   @override
@@ -240,7 +268,8 @@ final class PayriffPaymentViewStyle {
       other.applePayButton == applePayButton &&
       other.googlePayButton == googlePayButton &&
       other.walletDividerText == walletDividerText &&
-      other.showWalletDivider == showWalletDivider;
+      other.showWalletDivider == showWalletDivider &&
+      other.walletPlacement == walletPlacement;
 
   @override
   int get hashCode => Object.hashAll(<Object?>[
@@ -266,5 +295,6 @@ final class PayriffPaymentViewStyle {
     googlePayButton,
     walletDividerText,
     showWalletDivider,
+    walletPlacement,
   ]);
 }
